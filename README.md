@@ -77,7 +77,5 @@ src/
   util/                        Logger, fs helpers
 ```
 
-`installer.sh` at the repo root is the bash install script used by the hypeServ panel egg. It expects `DL_PATH` (zip URL) and optionally `HS_MOD_API_KEY`.
-
 ---
 &copy; onesrv — HypeServ
