@@ -38,7 +38,7 @@ export async function downloadManifestMods(
         if (!modId || !fileId) continue;
 
         try {
-            const url = `https://api.hypeserv.net/v3/modpack/fileUrl/${modId}/${fileId}`;
+            const url = `https://api.hypeserv.com/v3/modpack/fileUrl/${modId}/${fileId}`;
             log.info(url);
             const headers: Record<string, string> = apiKey
                 ? { Authorization: `Bearer ${apiKey}` }
