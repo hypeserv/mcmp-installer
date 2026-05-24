@@ -1,4 +1,4 @@
-# mcmp-installer
+![mcmp-logo](https://raw.githubusercontent.com/hypeserv/mcmp-installer/refs/heads/main/.github/mcmp-installer-logo.webp)
 
 > This is being used at [HypeServ](https://hypeserv.com).
 
