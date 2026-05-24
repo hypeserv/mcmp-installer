@@ -1,0 +1,35 @@
+Copyright (c) Regh & Meier Services GbR (onesrv / HypeServ). All rights reserved.
+
+This software and its source code are made publicly available for
+transparency and reference purposes only. All rights are reserved by
+the copyright holder.
+
+You MAY:
+  - View, read, and study the source code.
+  - Run the published package as a CLI tool (via `npx`, global install,
+    or local install) for the purpose of installing Minecraft modpacks.
+  - File issues and submit pull requests to the upstream repository.
+    By submitting a contribution, you grant Regh & Meier Services GbR a
+    perpetual, irrevocable, worldwide, royalty-free license to use,
+    modify, sublicense, and distribute that contribution as part of
+    this software.
+
+You MAY NOT, without prior written permission from the copyright holder:
+  - Redistribute the source code or compiled artifacts, in original or
+    modified form, as part of another product or service.
+  - Create derivative works for commercial use.
+  - Remove, alter, or obscure any copyright, trademark, or attribution
+    notices.
+  - Use the names "HypeServ" or "Regh & Meier Services GbR", or any
+    associated logos, to endorse or promote derived products.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For licensing inquiries beyond the scope above, contact HypeServ at
+https://hypeserv.com.

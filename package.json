@@ -1,12 +1,20 @@
 {
   "name": "@hypeserv/mcmp-installer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "hypeServ Minecraft modpack installer. Pulls a modpack from a URL, extracts it, installs the loader, and prepares the server for boot.",
-  "license": "Copyright Regh & Meier Services GbR",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
     "mcmp-installer": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "scripts": {
     "build": "tsc",
@@ -14,17 +22,33 @@
     "dev": "tsx src/cli.ts",
     "clean": "rimraf dist",
     "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run clean && npm run build && chmod +x dist/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/hypeserv/mcmp-installer.git"
+    "url": "git+https://github.com/hypeserv/mcmp-installer.git"
   },
-  "homepage": "https://github.com/hypeserv/mcmp-installer",
+  "homepage": "https://hypeserv.com",
   "bugs": {
     "url": "https://github.com/hypeserv/mcmp-installer/issues"
   },
-  "private": true,
+  "keywords": [
+    "minecraft",
+    "modpack",
+    "installer",
+    "forge",
+    "neoforge",
+    "fabric",
+    "curseforge",
+    "modrinth",
+    "ftb",
+    "technic",
+    "hypeserv"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "adm-zip": "^0.5.10",
     "axios": "^1.7.0",
