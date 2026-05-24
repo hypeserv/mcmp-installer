@@ -6,32 +6,40 @@ A TypeScript/Node.js installer that pulls a Minecraft modpack from a URL or prov
 
 Works with serverpacks from **Curseforge**, **Modrinth**, **FTB**, **Technic**, **direct URL**, and the **serverpack-creator** output format (manifest.json / variables.txt).
 
-## Install
+## Quick start (npx)
+
+No install required — run the latest published version directly:
+
 ```bash
-npm install
-npm run build
+npx -y @hypeserv/mcmp-installer --provider modrinth --modpack-id <slug>
+```
+
+Direct zip URL:
+
+```bash
+npx -y @hypeserv/mcmp-installer --wget-mode --modpack-id https://example.com/pack.zip
+```
+
+Pin a specific version (recommended in Dockerfiles):
+
+```bash
+npx -y @hypeserv/mcmp-installer@1.1.0 --provider curse --modpack-id 456789
+```
+
+## Global install
+
+```bash
+npm install -g @hypeserv/mcmp-installer
+mcmp-installer --provider modrinth --modpack-id <slug>
 ```
 
 ## Usage
+
 ```bash
-npm start -- --provider <provider> --modpack-id <id> [flags]
+mcmp-installer --provider <provider> --modpack-id <id> [flags]
 # or for a direct serverpack zip URL
-npm start -- --wget-mode --modpack-id https://example.com/pack.zip
+mcmp-installer --wget-mode --modpack-id https://example.com/pack.zip
 ```
-
-Pass arguments to npm scripts after `--`:
-```bash
-npm run dev -- --wget-mode --modpack-id https://example.com/pack.zip
-```
-
-### npm scripts
-| script | what it does |
-|---|---|
-| `npm run build` | compile TS to `dist/` |
-| `npm start` | run compiled CLI |
-| `npm run dev` | run sources via `tsx` (no build) |
-| `npm run typecheck` | type-check, no emit |
-| `npm run clean` | remove `dist/` |
 
 ## Flags
 | flag | description |
@@ -60,22 +68,10 @@ npm run dev -- --wget-mode --modpack-id https://example.com/pack.zip
 - Node.js 18+ (and npm)
 - Java 11+ (for Forge / NeoForge / Fabric server installers)
 
-## Project structure
-```
-src/
-  cli.ts                       CLI entrypoint (yargs)
-  main.ts                      Orchestrator
-  downloadFile.ts              HTTP download + progress bar
-  downloadManifestMods.ts      Curse manifest mod downloader (hypeServ API)
-  downloadModrinthMods.ts      Modrinth index + overrides + server jar
-  getForgeOrFabricVersion.ts   Parse loader info from Curse manifest
-  getModpackInfo.ts            Resolve modpack name/urls per provider
-  installLoader.ts             Run Forge/NeoForge/Fabric installer (java)
-  parseVariablesTxt.ts         serverpack-creator variables.txt parser
-  serverstarter.ts             ServerStarter YAML rewriter
-  unzipModpack.ts              Archive extraction
-  util/                        Logger, fs helpers
-```
+
+## License
+
+Source-available. See [LICENSE](./LICENSE) for terms — read/run permitted, redistribution and derivative works require written permission.
 
 ---
 &copy; onesrv — HypeServ
