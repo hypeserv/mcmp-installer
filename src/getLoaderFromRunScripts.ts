@@ -4,7 +4,7 @@ import { LoaderInfo, ModLoaderKind } from './getForgeOrFabricVersion.js';
 
 /**
  * Start scripts a server pack might ship. Forge/NeoForge installers emit
- * run.sh/run.bat; other tooling uses start*/launch* variants.
+ * run.sh/run.bat; other tooling uses start / launch variants.
  */
 const RUN_SCRIPT_NAMES = [
     'run.sh',
