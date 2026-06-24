@@ -19,6 +19,10 @@ import {
     ModrinthIndex
 } from './downloadModrinthMods.js';
 import { getLoaderFromManifest, LoaderInfo } from './getForgeOrFabricVersion.js';
+import {
+    getLoaderFromRunScripts,
+    getLoaderFromLibraries
+} from './getLoaderFromRunScripts.js';
 import { installLoader } from './installLoader.js';
 import {
     parseVariablesTxt,
@@ -362,6 +366,22 @@ async function detectLoader(modpackFolderPath: string): Promise<LoaderInfo | nul
             `MODLOADER=${vars.modloader || '?'}, ` +
             `MODLOADER_VERSION=${vars.modloaderVersion || '?'}).`
         );
+    }
+
+    // No manifest / variables.txt: fall back to the pack's own start scripts,
+    // whose launch command encodes the loader path (kind + MC + loader version).
+    const fromScripts = await getLoaderFromRunScripts(modpackFolderPath);
+    if (fromScripts) {
+        log.info('Loader info source: run script (run.sh / run.bat).');
+        return fromScripts;
+    }
+
+    // Last resort: a loader already unpacked under libraries/ but no parseable
+    // script (the loader is pre-installed; install will be skipped downstream).
+    const fromLibraries = await getLoaderFromLibraries(modpackFolderPath);
+    if (fromLibraries) {
+        log.info('Loader info source: libraries/ scan.');
+        return fromLibraries;
     }
 
     return null;

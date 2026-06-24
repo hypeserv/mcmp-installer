@@ -21,6 +21,18 @@ export async function installLoader(
     info: LoaderInfo,
     targetDir: string
 ): Promise<void> {
+    // Many server packs ship the loader pre-installed (their run.sh just
+    // launches it). If the loader artifacts are already on disk, skip the
+    // download + --installServer step and only ensure the runtime files are
+    // in place at the root.
+    if (await loaderArtifactsPresent(info, targetDir)) {
+        log.info(
+            `${info.kind} ${info.loaderVersion} already present in libraries, skipping install.`
+        );
+        await copyLoaderRuntimeFiles(info, targetDir);
+        return;
+    }
+
     switch (info.kind) {
         case 'forge':
             await installForge(info.mcVersion, info.loaderVersion, targetDir);
@@ -74,6 +86,43 @@ async function copyLoaderRuntimeFiles(info: LoaderInfo, targetDir: string): Prom
         await fs.copy(src, dest, { overwrite: true });
         log.info(`Copied ${e} to modpack root.`);
     }
+}
+
+/**
+ * Sanity check: are the loader's runtime artifacts actually on disk?
+ *
+ * Returns true when the loader is already installed and runnable, so the
+ * install step can be skipped. Guards against the case where a pack's run.sh
+ * references a loader path that isn't there yet (e.g. a bootstrap script that
+ * was meant to install it first) — in that case we still run the installer.
+ */
+export async function loaderArtifactsPresent(
+    info: LoaderInfo,
+    targetDir: string
+): Promise<boolean> {
+    if (info.kind === 'fabric') {
+        for (const jar of ['fabric-server-launch.jar', 'fabric-server-launcher.jar']) {
+            if (await fs.pathExists(path.join(targetDir, jar))) return true;
+        }
+        return false;
+    }
+
+    const libsDir = path.join(targetDir, 'libraries');
+    const loaderLibDir = resolveLoaderLibDir(info, libsDir);
+    if (!loaderLibDir || !(await fs.pathExists(loaderLibDir))) return false;
+
+    // Modern (1.17+): the args files are the launch contract.
+    for (const argFile of ['unix_args.txt', 'win_args.txt']) {
+        if (await fs.pathExists(path.join(loaderLibDir, argFile))) return true;
+    }
+
+    // Legacy: a runnable forge/neoforge jar (skip slim/client artifacts).
+    for (const e of await fs.readdir(loaderLibDir)) {
+        if (!/^(forge|neoforge)-.*\.jar$/i.test(e)) continue;
+        if (/-(sources|javadoc|client|slim)\.jar$/i.test(e)) continue;
+        return true;
+    }
+    return false;
 }
 
 function resolveLoaderLibDir(info: LoaderInfo, libsDir: string): string | null {
