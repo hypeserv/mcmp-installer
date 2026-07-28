@@ -10,12 +10,21 @@ export async function unzip(
     thisDir: string,
     output: string | false = false
 ): Promise<string> {
-    const extractDir = path.join(
+    let extractDir = path.join(
         thisDir,
         output || modpackName.replace(/[:,\s]/g, '_')
     );
 
     const archive = path.join(thisDir, zipName);
+
+    // When the download URL has no filename/extension (e.g. ends in a bare
+    // UUID), the derived folder name collides with the archive filename, so
+    // extractDir === archive. ensureDir would then mkdir over the zip file and
+    // throw EEXIST. Use a distinct dir in that case.
+    if (path.resolve(extractDir) === path.resolve(archive)) {
+        extractDir = `${extractDir}_extracted`;
+    }
+
     log.info(`Unpacking ${archive} -> ${extractDir}`);
     await fs.ensureDir(extractDir);
 
