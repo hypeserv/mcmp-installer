@@ -64,38 +64,79 @@ export async function getLoaderFromRunScripts(
 
 /** Parse a single start-script body into LoaderInfo, if it launches a loader. */
 export function parseRunScript(content: string): LoaderInfo | null {
-    let m = content.match(FORGE_ARGS_RE);
+    const vars = collectScriptVars(content);
+    const expanded = expandScriptVars(content, vars);
+
+    let m = expanded.match(FORGE_ARGS_RE);
     if (m) {
         const split = splitMcAndLoader(m[1]);
-        if (split) {
+        if (split && validateLoaderVersion(split.loader)) {
             return { kind: 'forge', mcVersion: split.mc, loaderVersion: split.loader };
         }
     }
 
-    m = content.match(NEOFORGE_1201_ARGS_RE);
+    m = expanded.match(NEOFORGE_1201_ARGS_RE);
     if (m) {
         const split = splitMcAndLoader(m[1]);
-        if (split) {
+        if (split && validateLoaderVersion(split.loader)) {
             return { kind: 'neoforge', mcVersion: split.mc, loaderVersion: split.loader };
         }
     }
 
-    m = content.match(NEOFORGE_ARGS_RE);
+    m = expanded.match(NEOFORGE_ARGS_RE);
     if (m) {
         const loaderVersion = m[1];
-        return {
-            kind: 'neoforge',
-            mcVersion: deriveNeoforgeMcVersion(loaderVersion),
-            loaderVersion
-        };
+        if (validateLoaderVersion(loaderVersion)) {
+            return {
+                kind: 'neoforge',
+                mcVersion: deriveNeoforgeMcVersion(loaderVersion),
+                loaderVersion
+            };
+        }
     }
 
-    m = content.match(LEGACY_FORGE_JAR_RE);
+    m = expanded.match(LEGACY_FORGE_JAR_RE);
     if (m) {
         return { kind: 'forge', mcVersion: m[1], loaderVersion: m[2] };
     }
 
     return null;
+}
+
+// Matches shell (`NAME=value`) and batch (`set NAME=value`) variable assignments.
+const VAR_ASSIGN_RE = /^\s*(?:set\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/gim;
+
+/** Scan a script for `NAME=value` / `set NAME=value` assignments. */
+function collectScriptVars(content: string): Map<string, string> {
+    const vars = new Map<string, string>();
+    for (const match of content.matchAll(VAR_ASSIGN_RE)) {
+        const name = match[1];
+        let value = match[2].trim();
+        if (
+            (value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))
+        ) {
+            value = value.slice(1, -1);
+        }
+        vars.set(name, value);
+    }
+    return vars;
+}
+
+/** Resolve `$VAR`, `${VAR}`, and `%VAR%` references against collected vars. */
+function expandScriptVars(content: string, vars: Map<string, string>): string {
+    return content.replace(
+        /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/g,
+        (whole, brace, plain, percent) => {
+            const name = brace ?? plain ?? percent;
+            return vars.get(name) ?? whole;
+        }
+    );
+}
+
+/** Reject versions that still contain unresolved var syntax or don't start with a digit. */
+function validateLoaderVersion(version: string): boolean {
+    return /^\d/.test(version) && !version.includes('$') && !version.includes('%');
 }
 
 /**
