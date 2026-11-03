@@ -4,7 +4,9 @@
 
 A TypeScript/Node.js installer that pulls a Minecraft modpack from a URL or provider, unpacks it, installs the right loader (Forge / NeoForge / Fabric), and leaves the server ready to start.
 
-Works with serverpacks from **Curseforge**, **Modrinth**, **FTB**, **Technic**, **direct URL**, and the **serverpack-creator** output format (manifest.json / variables.txt).
+Installs **CurseForge** and **Modrinth** packs by project id, any serverpack from a **direct URL**, and the **serverpack-creator** output format (manifest.json / variables.txt).
+
+CurseForge and Modrinth packs are resolved through [modpack-magic](https://github.com/hypeserv/modpack-magic): it picks the newest *release* (or the version you pin), prefers the server pack, and returns the download URL.
 
 ## Quick start (npx)
 
@@ -12,6 +14,7 @@ No install required — run the latest published version directly:
 
 ```bash
 npx -y @hypeserv/mcmp-installer --provider modrinth --modpack-id <slug>
+npx -y @hypeserv/mcmp-installer --provider curseforge --modpack-id 925200
 ```
 
 Direct zip URL:
@@ -23,7 +26,7 @@ npx -y @hypeserv/mcmp-installer --wget-mode --modpack-id https://example.com/pac
 Pin a specific version (recommended in Dockerfiles):
 
 ```bash
-npx -y @hypeserv/mcmp-installer@1.1.0 --provider curse --modpack-id 456789
+npx -y @hypeserv/mcmp-installer@1.3.0 --provider curseforge --modpack-id 925200 --modpack-version 6012345
 ```
 
 ## Global install
@@ -44,21 +47,41 @@ mcmp-installer --wget-mode --modpack-id https://example.com/pack.zip
 ## Flags
 | flag | description |
 |---|---|
-| `--provider` | `curse` \| `technic` \| `ftb` \| `modrinth` \| `direct`. Required unless `--wget-mode`. |
-| `--modpack-id` | Project ID / slug / URL. In `--wget-mode` this is a direct zip URL. |
-| `--modpack-version` | Specific version/build to install. Latest if omitted. Not used for `direct`. |
+| `--provider` | `curseforge` (alias `curse`) \| `modrinth` \| `direct`. Required unless `--wget-mode`. `ftb` and `technic` are not supported yet: use `--wget-mode` with a serverpack URL. |
+| `--modpack-id` | CurseForge project id, Modrinth slug/id, or a URL for `direct`. In `--wget-mode` this is a direct zip URL. |
+| `--modpack-version` | CurseForge file id / Modrinth version id to install. Latest release if omitted. Not used for `direct`. |
+| `--resolver-url <url>` | modpack-magic base URL. Falls back to `MODPACK_MAGIC_URL`, then `https://modpack-magic.hypeserv.com`. |
 | `--wget-mode` | Skip provider parsing — treat `--modpack-id` as a direct zip URL (HEAD redirect resolved). |
 | `--wings` | Flatten install into the working dir instead of a modpack subfolder. Use with panel daemons (e.g. [Pterodactyl Wings](https://github.com/pterodactyl/wings)). |
+| `--resolver-token <token>` | Bearer token for modpack-magic, sent as `Authorization: Bearer <token>` on the resolve call only. Falls back to `MODPACK_MAGIC_TOKEN`. Leave unset when modpack-magic runs without auth (the default). Prefer the env var: command-line args show up in the process list. The token is never logged. |
+| `--preserve-world` | With `--wings`: keep world dirs (`level-name`, `_nether`, `_the_end`, `world*`) and `server.properties` already in the working dir; the pack's copies are dropped. Use for reinstalls/updates that keep the world. |
 | `--working-path <dir>` | Directory to install into. Defaults to CWD. |
 | `--folder-name <name>` | Explicit output folder name (ignored in `--wings`). |
 | `--clean-scripts` | Remove `.sh` / `.bat` startup scripts after install. |
 | `--update` | Remove `/mods`, `/.fabric`, `/libraries`, `/coremods` before installing. |
-| `--manifest-api-key <key>` | API key for the hypeServ manifest mod download API (Curse manifest packs). |
+| `--manifest-api-key <key>` | API key for the hypeServ manifest mod download API. Needed for CurseForge packs without a server pack (client manifest only). |
+
+## Install info
+
+After a successful install the installer writes `.hypeserv/modpack.json` into the server root:
+
+```json
+{
+  "provider": "curseforge",
+  "projectId": "925200",
+  "versionId": "6012345",
+  "mcVersion": "1.21.1",
+  "loader": "neoforge",
+  "installedAt": "2026-11-03T14:00:00.000Z"
+}
+```
+
+For `direct` / `--wget-mode` installs, `versionId` is `null` and `mcVersion` / `loader` come from the detected loader, if any.
 
 ## What it handles
-- Standard Curseforge serverpacks (with/without bundled loader)
+- Standard CurseForge serverpacks (with/without bundled loader)
+- CurseForge client packs without a server pack (mods via the manifest API, plus `overrides/`)
 - Modrinth `.mrpack` (mods + overrides + dependencies)
-- FTB binary installers (run directly)
 - serverpack-creator output (manifest.json **or** variables.txt)
 - Nested folder zips (auto-flattens one level)
 - Forge / NeoForge / Fabric installer download + run via Java

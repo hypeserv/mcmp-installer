@@ -1,16 +1,17 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
-import { spawn } from 'node:child_process';
 import { log } from './util/logger.js';
 import { download, downloadWgetStyle } from './downloadFile.js';
 import { unzip } from './unzipModpack.js';
 import {
-    getServerModpackUrl,
-    getModpackMinecraftVersion,
-    Provider,
-    ModpackUrls
+    getModpackSource,
+    normalizeProvider,
+    CanonicalProvider,
+    ModpackSource,
+    Provider
 } from './getModpackInfo.js';
+import { getResolverUrl, getResolverToken } from './resolveModpack.js';
 import { downloadManifestMods } from './downloadManifestMods.js';
 import {
     downloadModrinthMods,
@@ -45,6 +46,11 @@ export interface InstallerOptions {
     workingPath: string | false;
     manifestApiKey: string | false;
     wgetMode: boolean;
+    resolverUrl: string | false;
+    /** Bearer token for modpack-magic (falls back to MODPACK_MAGIC_TOKEN). Never logged. */
+    resolverToken: string | false;
+    /** Wings mode: keep world dirs (and server.properties) already in the working dir. */
+    preserveWorld: boolean;
 }
 
 interface InstallPipelineInput {
@@ -57,9 +63,24 @@ interface InstallPipelineInput {
     cleanScripts: boolean;
 }
 
+interface InstallPipelineResult {
+    folder: string;
+    loader: LoaderInfo | null;
+}
+
+/** Written to <server root>/.hypeserv/modpack.json after a successful install. */
+interface InstalledModpackInfo {
+    provider: CanonicalProvider;
+    projectId: string;
+    versionId: string | null;
+    mcVersion: string | null;
+    loader: string | null;
+    installedAt: string;
+}
+
 export async function runInstaller(opts: InstallerOptions): Promise<void> {
     const {
-        provider,
+        provider: rawProvider,
         modpackId,
         modpackVersion,
         wings,
@@ -72,90 +93,71 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
     } = opts;
 
     const operatingSystem = os.platform().startsWith('win') ? 'Windows' : 'Linux';
-    const architecture = os.arch();
-    log.info(`Detected OS ${operatingSystem}, arch ${architecture}`);
+    log.info(`Detected OS ${operatingSystem}, arch ${os.arch()}`);
 
     const thisDir = workingPath || process.cwd();
     process.chdir(thisDir);
 
-    // wget-mode: skip provider detection/parsing — modpackId IS the zip URL.
-    if (wgetMode) {
-        if (!modpackId) {
-            log.error('wget-mode requires --modpack-id to be a direct zip URL.');
-            process.exit(1);
-        }
-        log.info(`wget-mode: pulling zip directly from ${modpackId}`);
-        const filename = await downloadWgetStyle(modpackId);
-        const modpackName = deriveNameFromFilename(filename) || 'Direct_Download';
-
-        const installedAt = await runInstallPipeline({
-            filename,
-            modpackName,
-            thisDir,
-            explicitFolderName: explicitFolderName || false,
-            update,
-            manifestApiKey,
-            cleanScripts
-        });
-        if (wings) {
-            await flattenIntoWorkingDir(installedAt, thisDir);
-        }
-        log.info(`Finished downloading and installing modpack ${modpackName}! :)`);
-        return;
-    }
-
-    if (!provider) {
-        log.error('--provider is required unless --wget-mode is set.');
-        process.exit(1);
-    }
     if (!modpackId) {
         log.error('--modpack-id is required.');
         process.exit(1);
     }
-
-    let minecraftVersion: string;
-    if (['curse', 'technic', 'ftb', 'modrinth'].includes(provider)) {
-        const v = await getModpackMinecraftVersion(provider, modpackId);
-        minecraftVersion = v || 'unknown';
-    } else {
-        minecraftVersion = 'unknown';
-    }
-
-    const result = await getServerModpackUrl(
-        provider,
-        modpackId,
-        modpackVersion,
-        operatingSystem,
-        architecture
-    );
-
-    const [modpackName, modpackUrls]: [string, ModpackUrls, string] = result;
-
-    if (!modpackName) {
-        log.error('Modpack info not provided. Exiting.');
+    if (!wgetMode && !rawProvider) {
+        log.error('--provider is required unless --wget-mode is set.');
         process.exit(1);
     }
 
-    log.info(`Modpack: ${modpackName} (MC ${minecraftVersion})`);
-    log.info(modpackUrls);
+    // wget-mode: skip provider detection/parsing — modpackId IS the zip URL.
+    const provider: CanonicalProvider = wgetMode ? 'direct' : normalizeProvider(rawProvider!);
+    let source: ModpackSource;
+    if (wgetMode) {
+        log.info(`wget-mode: pulling zip directly from ${modpackId}`);
+        source = {
+            name: 'Direct_Download',
+            downloadUrl: modpackId,
+            versionId: null,
+            mcVersion: null,
+            loader: null
+        };
+    } else {
+        const resolverUrl = getResolverUrl(opts.resolverUrl);
+        const resolverToken = getResolverToken(opts.resolverToken);
+        if (provider === 'curseforge' || provider === 'modrinth') {
+            log.info(
+                `Resolving ${provider} modpack ${modpackId} via ${resolverUrl}` +
+                (resolverToken ? ' (with auth token)...' : '...')
+            );
+        }
+        source = await getModpackSource(provider, modpackId, modpackVersion, resolverUrl, resolverToken);
+        log.info(
+            `Modpack: ${source.name}` +
+            (source.versionId ? ` (version ${source.versionId}` : '') +
+            (source.mcVersion ? `, MC ${source.mcVersion}` : '') +
+            (source.loader ? `, ${source.loader}` : '') +
+            (source.versionId ? ')' : '')
+        );
+        if (source.kind) log.info(`Download kind: ${source.kind}`);
+        if (source.kind === 'client-manifest' && !manifestApiKey) {
+            log.warn(
+                'Pack has no server pack, only a client manifest. ' +
+                'Mods are downloaded through the manifest API, which needs --manifest-api-key.'
+            );
+        }
+    }
 
-    const downloadUrl = pickDownloadUrl(modpackUrls, modpackName);
-    if (!downloadUrl) {
+    if (!source.downloadUrl) {
         log.error('No download URL available, exiting.');
         process.exit(1);
     }
 
-    // FTB ships an executable installer binary, not a zip.
-    if (provider === 'ftb') {
-        const ftbFile = await downloadWgetStyle(downloadUrl);
-        await runExecutable(ftbFile, thisDir);
-        await fs.remove(ftbFile);
-        log.info('Finished running FTB server install binary.');
-        return;
-    }
+    const filename = wgetMode
+        ? await downloadWgetStyle(source.downloadUrl)
+        : await download(source.downloadUrl);
+    const modpackName = wgetMode
+        ? deriveNameFromFilename(filename) || source.name
+        : source.name;
 
-    const filename = await download(downloadUrl);
-    const installedAt = await runInstallPipeline({
+    const result = await runInstallPipeline({
         filename,
         modpackName,
         thisDir,
@@ -164,51 +166,92 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
         manifestApiKey,
         cleanScripts
     });
+
+    let finalDir = result.folder;
     if (wings) {
-        await flattenIntoWorkingDir(installedAt, thisDir);
+        await flattenIntoWorkingDir(result.folder, thisDir, opts.preserveWorld);
+        finalDir = thisDir;
     }
+
+    await writeInstalledModpackInfo(finalDir, {
+        provider,
+        projectId: modpackId,
+        versionId: source.versionId,
+        mcVersion: source.mcVersion || result.loader?.mcVersion || null,
+        loader: source.loader || result.loader?.kind || null,
+        installedAt: new Date().toISOString()
+    });
+
     log.info(`Finished downloading and installing modpack ${modpackName}! :)`);
+}
+
+async function writeInstalledModpackInfo(
+    serverRoot: string,
+    info: InstalledModpackInfo
+): Promise<void> {
+    const file = path.join(serverRoot, '.hypeserv', 'modpack.json');
+    try {
+        await fs.outputJson(file, info, { spaces: 2 });
+        log.info(`Wrote install info to ${file}`);
+    } catch (err) {
+        // Informational only; never fail an otherwise good install over it.
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`Could not write ${file}: ${msg}`);
+    }
 }
 
 /**
  * Move every entry from the install subfolder up to the working directory
  * (wings mode), then remove the now-empty subfolder. Used so the server
  * panel daemon finds files at /mnt/server, not /mnt/server/<modpack>/.
+ *
+ * With preserveWorld, world dirs and server.properties that already exist in
+ * the working dir are kept; the pack's copies are dropped. Otherwise a pack
+ * that ships its own world/ would overwrite the player's world on reinstall,
+ * and a pack server.properties could point level-name at another folder.
  */
-async function flattenIntoWorkingDir(installedAt: string, workingDir: string): Promise<void> {
+async function flattenIntoWorkingDir(
+    installedAt: string,
+    workingDir: string,
+    preserveWorld: boolean
+): Promise<void> {
     if (path.resolve(installedAt) === path.resolve(workingDir)) return;
     log.info(`Wings mode: flattening ${installedAt} -> ${workingDir}`);
+    const keep = preserveWorld ? await existingWorldEntries(workingDir) : new Set<string>();
     const entries = await fs.readdir(installedAt);
     for (const entry of entries) {
         const from = path.join(installedAt, entry);
+        if (keep.has(entry)) {
+            log.info(`Preserving existing ${entry}, skipping the pack's copy.`);
+            await fs.remove(from);
+            continue;
+        }
         const to = path.join(workingDir, entry);
         await fs.move(from, to, { overwrite: true });
     }
     await fs.remove(installedAt);
 }
 
-function pickDownloadUrl(modpackUrls: ModpackUrls, modpackName: string): string | null {
-    if (modpackUrls.SpecifiedVersion) {
-        log.info(`Downloading specified version of ${modpackName}...`);
-        return modpackUrls.SpecifiedVersion;
+/** World dirs + server.properties currently present in the server root. */
+async function existingWorldEntries(serverRoot: string): Promise<Set<string>> {
+    let levelName = 'world';
+    const propsPath = path.join(serverRoot, 'server.properties');
+    if (await fs.pathExists(propsPath)) {
+        const props = await fs.readFile(propsPath, 'utf8');
+        const match = props.match(/^level-name=(.*)$/m);
+        const value = match?.[1]?.trim();
+        if (value) levelName = value;
     }
-    if (modpackUrls.LatestReleaseServerpack) {
-        log.info(`Downloading latest release serverpack of ${modpackName}...`);
-        return modpackUrls.LatestReleaseServerpack;
+    const candidates = new Set([
+        'server.properties',
+        'world', 'world_nether', 'world_the_end',
+        levelName, `${levelName}_nether`, `${levelName}_the_end`
+    ]);
+    const present = new Set<string>();
+    for (const name of candidates) {
+        if (await fs.pathExists(path.join(serverRoot, name))) present.add(name);
     }
-    if (modpackUrls.LatestBetaServerpack) {
-        log.info(`Downloading latest beta serverpack of ${modpackName}...`);
-        return modpackUrls.LatestBetaServerpack;
-    }
-    if (modpackUrls.LatestAlphaServerpack) {
-        log.info(`Downloading latest alpha serverpack of ${modpackName}...`);
-        return modpackUrls.LatestAlphaServerpack;
-    }
-    if (modpackUrls.LatestReleaseNonServerpack) {
-        log.info(`Downloading latest non-serverpack of ${modpackName}...`);
-        return modpackUrls.LatestReleaseNonServerpack;
-    }
-    return null;
+    return present;
 }
 
 function deriveNameFromFilename(filename: string): string | null {
@@ -217,7 +260,7 @@ function deriveNameFromFilename(filename: string): string | null {
     return base.replace(/[:,\s]/g, '_');
 }
 
-async function runInstallPipeline(input: InstallPipelineInput): Promise<string> {
+async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallPipelineResult> {
     const {
         filename,
         modpackName,
@@ -283,6 +326,14 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<string> 
         process.chdir(modsDir);
         await downloadManifestMods(manifestPath, manifestApiKey);
         process.chdir(modpackFolderPath);
+
+        // CurseForge client packs ship configs etc. in overrides/.
+        const overridesPath = path.join(modpackFolderPath, 'overrides');
+        if (await fs.pathExists(overridesPath)) {
+            log.info(`Moving manifest overrides from ${overridesPath} to ${modpackFolderPath}`);
+            await fs.copy(overridesPath, modpackFolderPath, { overwrite: true });
+            await fs.remove(overridesPath);
+        }
     }
 
     const modrinthIndex = path.join(modpackFolderPath, 'modrinth.index.json');
@@ -333,7 +384,7 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<string> 
         }
     }
 
-    return modpackFolderPath;
+    return { folder: modpackFolderPath, loader };
 }
 
 /**
@@ -385,22 +436,4 @@ async function detectLoader(modpackFolderPath: string): Promise<LoaderInfo | nul
     }
 
     return null;
-}
-
-async function runExecutable(filename: string, cwd: string): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-        const proc = spawn(filename, {
-            cwd,
-            shell: true,
-            stdio: 'inherit'
-        });
-        proc.on('exit', (code: number | null) => {
-            if (code === 0) resolve();
-            else {
-                log.warn(`Installer exited with code ${code}, continuing.`);
-                resolve();
-            }
-        });
-        proc.on('error', reject);
-    });
 }

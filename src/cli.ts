@@ -2,7 +2,8 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { runInstaller, InstallerOptions } from './main.js';
-import { Provider } from './getModpackInfo.js';
+import { Provider, PROVIDERS } from './getModpackInfo.js';
+import { DEFAULT_RESOLVER_URL } from './resolveModpack.js';
 
 interface CliArgs {
     provider?: string;
@@ -15,6 +16,9 @@ interface CliArgs {
     'working-path': string | false;
     'manifest-api-key': string | false;
     'wget-mode': boolean;
+    'resolver-url': string | false;
+    'preserve-world': boolean;
+    'resolver-token': string | false;
 }
 
 async function main(): Promise<void> {
@@ -23,7 +27,8 @@ async function main(): Promise<void> {
         .usage('$0 -provider <provider> -modpack-id <id> [options]')
         .option('provider', {
             type: 'string',
-            describe: 'curse | technic | ftb | modrinth | direct',
+            choices: PROVIDERS as Provider[],
+            describe: 'curseforge (alias curse) | modrinth | direct. ftb / technic are not supported yet.',
             demandOption: false
         })
         .option('modpack-id', {
@@ -33,7 +38,7 @@ async function main(): Promise<void> {
         })
         .option('modpack-version', {
             type: 'string',
-            describe: 'Version/build identifier (not used for direct)',
+            describe: 'Version/file id to install. Latest release if omitted. Not used for direct.',
             default: false as const
         })
         .option('wings', {
@@ -71,6 +76,21 @@ async function main(): Promise<void> {
             type: 'boolean',
             default: false
         })
+        .option('resolver-url', {
+            describe: `modpack-magic base URL used to resolve curseforge / modrinth packs (env MODPACK_MAGIC_URL, default ${DEFAULT_RESOLVER_URL})`,
+            type: 'string',
+            default: false as const
+        })
+        .option('resolver-token', {
+            describe: 'Bearer token for modpack-magic (env MODPACK_MAGIC_TOKEN). Prefer the env var: CLI args are visible in the process list.',
+            type: 'string',
+            default: false as const
+        })
+        .option('preserve-world', {
+            describe: 'Wings mode: keep existing world dirs and server.properties instead of overwriting them with the pack\'s copies',
+            type: 'boolean',
+            default: false
+        })
         .check((args) => {
             if (!args['wget-mode'] && !args.provider) {
                 throw new Error('--provider is required unless --wget-mode is set.');
@@ -94,7 +114,10 @@ async function main(): Promise<void> {
         folderName: argv['folder-name'] || false,
         workingPath: argv['working-path'] || false,
         manifestApiKey: argv['manifest-api-key'] || false,
-        wgetMode: argv['wget-mode'] || false
+        wgetMode: argv['wget-mode'] || false,
+        resolverUrl: argv['resolver-url'] || false,
+        preserveWorld: argv['preserve-world'],
+        resolverToken: argv['resolver-token'] || false
     };
 
     await runInstaller(opts);

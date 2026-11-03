@@ -1,116 +1,65 @@
-import axios from 'axios';
-import { log } from './util/logger.js';
+import { resolveModpack, ResolvedDownloadKind } from './resolveModpack.js';
 
-export type Provider = 'curse' | 'technic' | 'ftb' | 'modrinth' | 'direct';
+/** `curse` is kept as an alias of `curseforge`. */
+export type Provider = 'curseforge' | 'curse' | 'modrinth' | 'ftb' | 'technic' | 'direct';
+export type CanonicalProvider = Exclude<Provider, 'curse'>;
 
-export interface ModpackUrls {
-    SpecifiedVersion: string;
-    LatestReleaseServerpack: string;
-    LatestBetaServerpack: string;
-    LatestAlphaServerpack: string;
-    LatestReleaseNonServerpack: string;
+export const PROVIDERS: readonly Provider[] = [
+    'curseforge',
+    'curse',
+    'modrinth',
+    'ftb',
+    'technic',
+    'direct'
+];
+
+export function normalizeProvider(provider: Provider): CanonicalProvider {
+    return provider === 'curse' ? 'curseforge' : provider;
 }
 
-export type ModpackUrlResult = [string, ModpackUrls, string];
-
-interface ModrinthVersion {
-    id: string;
-    version_number: string;
-    game_versions?: string[];
-    files?: { url?: string }[];
+export interface ModpackSource {
+    name: string;
+    downloadUrl: string;
+    /** Absent for `direct`. */
+    kind?: ResolvedDownloadKind;
+    versionId: string | null;
+    mcVersion: string | null;
+    loader: string | null;
 }
 
-interface ModrinthProject {
-    title?: string;
-    name?: string;
-    slug?: string;
-}
-
-export async function getModpackMinecraftVersion(
-    provider: Provider,
-    modpackId: string
-): Promise<string | false> {
-    try {
-        if (provider === 'modrinth') {
-            const url = `https://api.modrinth.com/v2/project/${modpackId}/version`;
-            const resp = await axios.get<ModrinthVersion[]>(url, {
-                headers: {
-                    'user-agent':
-                        'Mozilla/5.0 (compatible; hypeserv-mcmp-installer)',
-                    referer: 'https://api.modrinth.com/'
-                },
-                timeout: 60000
-            });
-            return resp.data?.[0]?.game_versions?.[0] || false;
-        }
-        return false;
-    } catch {
-        return false;
-    }
-}
-
-export async function getServerModpackUrl(
-    provider: Provider,
+export async function getModpackSource(
+    provider: CanonicalProvider,
     modpackId: string,
     modpackVersion: string | false,
-    _operatingSystem: string,
-    _architecture: string
-): Promise<ModpackUrlResult> {
-    if (provider === 'direct') {
-        const name = 'Direct_Download';
-        const urls: ModpackUrls = {
-            SpecifiedVersion: modpackId,
-            LatestReleaseServerpack: '',
-            LatestBetaServerpack: '',
-            LatestAlphaServerpack: '',
-            LatestReleaseNonServerpack: ''
-        };
-        return [name, urls, modpackId];
-    }
-
-    if (provider === 'modrinth') {
-        const project = (await axios.get<ModrinthProject>(
-            `https://api.modrinth.com/v2/project/${modpackId}`,
-            { timeout: 60000 }
-        )).data;
-
-        const name = project.title || project.name || project.slug || modpackId;
-        const versions = (await axios.get<ModrinthVersion[]>(
-            `https://api.modrinth.com/v2/project/${modpackId}/version`,
-            { timeout: 60000 }
-        )).data;
-
-        let chosen: ModrinthVersion | undefined;
-        if (modpackVersion) {
-            chosen =
-                versions.find(v => v.version_number === modpackVersion) ||
-                versions.find(v => v.id === modpackVersion);
+    resolverUrl: string,
+    resolverToken: string | null = null
+): Promise<ModpackSource> {
+    switch (provider) {
+        case 'direct':
+            return {
+                name: 'Direct_Download',
+                downloadUrl: modpackId,
+                versionId: null,
+                mcVersion: null,
+                loader: null
+            };
+        case 'curseforge':
+        case 'modrinth': {
+            const r = await resolveModpack(resolverUrl, provider, modpackId, modpackVersion, resolverToken);
+            return {
+                name: r.name,
+                downloadUrl: r.download.url,
+                kind: r.download.kind,
+                versionId: r.versionId,
+                mcVersion: r.mcVersion,
+                loader: r.loader
+            };
         }
-        if (!chosen) chosen = versions[0];
-
-        const normalDownloadUrl = chosen?.files?.[0]?.url || '';
-        const urls: ModpackUrls = {
-            SpecifiedVersion: normalDownloadUrl,
-            LatestReleaseServerpack: '',
-            LatestBetaServerpack: '',
-            LatestAlphaServerpack: '',
-            LatestReleaseNonServerpack: ''
-        };
-
-        return [name, urls, normalDownloadUrl];
+        case 'ftb':
+        case 'technic':
+            throw new Error(
+                `Provider "${provider}" is not supported yet. ` +
+                'Use --wget-mode with a direct serverpack URL instead.'
+            );
     }
-
-    const urls: ModpackUrls = {
-        SpecifiedVersion: '',
-        LatestReleaseServerpack: '',
-        LatestBetaServerpack: '',
-        LatestAlphaServerpack: '',
-        LatestReleaseNonServerpack: ''
-    };
-
-    const name = `${provider}_${modpackId}`;
-    const normalDownloadUrl = '';
-    // Reference log to keep parity with previous behavior if needed
-    void log;
-    return [name, urls, normalDownloadUrl];
 }
