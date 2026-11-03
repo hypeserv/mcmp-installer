@@ -124,10 +124,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-    if (err instanceof Error) {
-        console.error(err.stack || err.message);
-    } else {
-        console.error(err);
-    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[MCI][ERROR] Modpack installation failed: ${msg}`);
+    if (err instanceof Error && err.stack) console.error(err.stack);
     process.exit(1);
 });

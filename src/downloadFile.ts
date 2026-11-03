@@ -1,5 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import axios, { AxiosResponse } from 'axios';
 import cliProgress from 'cli-progress';
 import { log } from './util/logger.js';
@@ -45,22 +47,24 @@ export async function download(url: string): Promise<string> {
 
     await fs.ensureDir(process.cwd());
     const destPath = path.join(process.cwd(), fileName);
-    const writer = fs.createWriteStream(destPath);
 
+    // pipeline() applies backpressure (no buffering of a fast network into
+    // memory) and resolves only after the file is flushed to disk.
     let downloaded = 0;
-    await new Promise<void>((resolve, reject) => {
-        res.data.on('data', (chunk: Buffer) => {
+    const progress = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
             downloaded += chunk.length;
             if (total > 0) bar.update(downloaded);
-            writer.write(chunk);
-        });
-        res.data.on('end', () => {
-            writer.end();
-            resolve();
-        });
-        res.data.on('error', reject);
+            cb(null, chunk);
+        }
     });
-
+    try {
+        await pipeline(res.data, progress, fs.createWriteStream(destPath));
+    } catch (err) {
+        if (total > 0) bar.stop();
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Download of ${fileName} failed: ${msg}`);
+    }
     if (total > 0) bar.stop();
     log.info(`Finished downloading ${fileName}`);
     return fileName;

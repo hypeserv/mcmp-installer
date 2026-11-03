@@ -189,15 +189,11 @@ async function writeInstalledModpackInfo(
     serverRoot: string,
     info: InstalledModpackInfo
 ): Promise<void> {
+    // Last step of every successful install. The egg script treats a missing
+    // file as a failed install, so a write error must fail the run too.
     const file = path.join(serverRoot, '.hypeserv', 'modpack.json');
-    try {
-        await fs.outputJson(file, info, { spaces: 2 });
-        log.info(`Wrote install info to ${file}`);
-    } catch (err) {
-        // Informational only; never fail an otherwise good install over it.
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`Could not write ${file}: ${msg}`);
-    }
+    await fs.outputJson(file, info, { spaces: 2 });
+    log.info(`Wrote install info to ${file}`);
 }
 
 /**
