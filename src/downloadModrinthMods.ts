@@ -3,12 +3,14 @@ import path from 'node:path';
 import axios from 'axios';
 import { download } from './downloadFile.js';
 import { log } from './util/logger.js';
+import { ModProgress } from './util/modProgress.js';
 import { installLoader } from './installLoader.js';
 import { LoaderInfo } from './getForgeOrFabricVersion.js';
 
 export interface ModrinthFileEntry {
     path: string;
     downloads?: string[];
+    env?: { client?: string; server?: string };
 }
 
 export interface ModrinthDependencies {
@@ -37,27 +39,50 @@ interface MojangVersionInfo {
     downloads?: { server?: { url?: string } };
 }
 
+/**
+ * Download every file listed in modrinth.index.json to its `path`, relative
+ * to the pack root (the index's folder). Client-only files
+ * (env.server = "unsupported") are skipped.
+ */
 export async function downloadModrinthMods(indexPath: string): Promise<void> {
     const raw = await fs.readFile(indexPath, 'utf8');
     const data = JSON.parse(raw) as ModrinthIndex;
+    const root = path.resolve(path.dirname(indexPath));
+    const files = data.files || [];
 
-    log.info('Starting download of Modrinth modpack server mods...');
-    for (const mod of data.files || []) {
-        try {
-            const modFilename = path.basename(mod.path);
-            const url = mod.downloads?.[0];
-            if (!url) {
-                log.warn(`No download URL for ${modFilename}`);
+    log.info(`Downloading ${files.length} files from modrinth.index.json...`);
+    const progress = new ModProgress(files.filter(f => f.env?.server !== 'unsupported').length);
+    const prev = process.cwd();
+    try {
+        for (const mod of files) {
+            if (mod.env?.server === 'unsupported') {
+                progress.skip();
                 continue;
             }
-            log.info(`Downloading ${modFilename} ...`);
-            await download(url);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            log.warn(`Error downloading Modrinth mod: ${message}`);
+            const name = path.basename(mod.path);
+            const dest = path.resolve(root, mod.path);
+            if (!dest.startsWith(root + path.sep)) {
+                progress.fail(name, `path outside the pack: ${mod.path}`);
+                continue;
+            }
+            const url = mod.downloads?.[0];
+            if (!url) {
+                progress.fail(name, 'no download URL');
+                continue;
+            }
+            try {
+                await fs.ensureDir(path.dirname(dest));
+                process.chdir(path.dirname(dest));
+                await download(url, { fileName: name, quiet: true });
+                progress.ok(name);
+            } catch (err) {
+                progress.fail(name, err instanceof Error ? err.message : String(err));
+            }
         }
+    } finally {
+        process.chdir(prev);
+        progress.finish();
     }
-    log.info('Finished downloading Modrinth mods.');
 }
 
 export async function moveModrinthOverrides(

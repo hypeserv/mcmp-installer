@@ -12,7 +12,7 @@ import {
     Provider
 } from './getModpackInfo.js';
 import { getResolverUrl, getResolverToken } from './resolveModpack.js';
-import { downloadManifestMods } from './downloadManifestMods.js';
+import { downloadManifestMods, ManifestModsReport } from './downloadManifestMods.js';
 import {
     downloadModrinthMods,
     moveModrinthOverrides,
@@ -25,6 +25,9 @@ import {
     getLoaderFromLibraries
 } from './getLoaderFromRunScripts.js';
 import { installLoader } from './installLoader.js';
+import { ensureStartTarget } from './ensureStartTarget.js';
+import { guessLoaderFromMods, loaderFromInstallerJar } from './guessLoader.js';
+import { findPackwizPackUrl, runPackwiz } from './packwiz.js';
 import {
     parseVariablesTxt,
     variablesToLoaderInfo
@@ -61,11 +64,14 @@ interface InstallPipelineInput {
     update: boolean;
     manifestApiKey: string | false;
     cleanScripts: boolean;
+    /** MC version from the resolver, used when the pack itself has no loader info. */
+    mcVersionHint: string | null;
 }
 
 interface InstallPipelineResult {
     folder: string;
     loader: LoaderInfo | null;
+    mods: ManifestModsReport | null;
 }
 
 /** Written to <server root>/.hypeserv/modpack.json after a successful install. */
@@ -76,6 +82,8 @@ interface InstalledModpackInfo {
     mcVersion: string | null;
     loader: string | null;
     installedAt: string;
+    /** Manifest installs only: restricted / failed / removed mods, for panel warnings. */
+    mods?: ManifestModsReport;
 }
 
 export async function runInstaller(opts: InstallerOptions): Promise<void> {
@@ -164,7 +172,8 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
         explicitFolderName: explicitFolderName || false,
         update,
         manifestApiKey,
-        cleanScripts
+        cleanScripts,
+        mcVersionHint: source.mcVersion
     });
 
     let finalDir = result.folder;
@@ -179,7 +188,8 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
         versionId: source.versionId,
         mcVersion: source.mcVersion || result.loader?.mcVersion || null,
         loader: source.loader || result.loader?.kind || null,
-        installedAt: new Date().toISOString()
+        installedAt: new Date().toISOString(),
+        ...(result.mods ? { mods: result.mods } : {})
     });
 
     log.info(`Finished downloading and installing modpack ${modpackName}! :)`);
@@ -314,13 +324,19 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
         }
     }
 
+    let modsReport: ManifestModsReport | null = null;
+    const packwizUrl = await findPackwizPackUrl(modpackFolderPath);
+    if (packwizUrl) {
+        await runPackwiz(modpackFolderPath, packwizUrl);
+    }
+
     const manifestPath = path.join(modpackFolderPath, 'manifest.json');
     if ((await fs.pathExists(manifestPath)) && manifestApiKey) {
         log.info('Running manifest installer...');
         const modsDir = path.join(modpackFolderPath, 'mods');
         await fs.ensureDir(modsDir);
         process.chdir(modsDir);
-        await downloadManifestMods(manifestPath, manifestApiKey);
+        modsReport = await downloadManifestMods(manifestPath, manifestApiKey);
         process.chdir(modpackFolderPath);
 
         // CurseForge client packs ship configs etc. in overrides/.
@@ -333,7 +349,8 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
     }
 
     const modrinthIndex = path.join(modpackFolderPath, 'modrinth.index.json');
-    if (await fs.pathExists(modrinthIndex)) {
+    const isMrpack = await fs.pathExists(modrinthIndex);
+    if (isMrpack) {
         log.info('Running Modrinth installer logic...');
         const modsDir = path.join(modpackFolderPath, 'mods');
         await fs.ensureDir(modsDir);
@@ -351,13 +368,21 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
         await grabModrinthServerJars(indexData.dependencies, modpackFolderPath);
     }
 
-    const loader = await detectLoader(modpackFolderPath);
-    if (loader) {
+    // mrpacks install their loader from modrinth.index.json above.
+    let loader = isMrpack ? null : await detectLoader(modpackFolderPath);
+    if (!isMrpack && !loader) {
+        loader =
+            (await loaderFromInstallerJar(modpackFolderPath, input.mcVersionHint)) ||
+            (await guessLoaderFromMods(modpackFolderPath, input.mcVersionHint));
+    }
+    if (isMrpack) {
+        // handled by grabModrinthServerJars
+    } else if (loader) {
         log.info(
             `Detected ${loader.kind} ${loader.loaderVersion} (MC ${loader.mcVersion}), installing loader...`
         );
         try {
-            await installLoader(loader, modpackFolderPath);
+            loader = await installLoader(loader, modpackFolderPath);
             log.info(`${loader.kind} install finished.`);
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -370,6 +395,9 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
         );
     }
 
+    await ensureStartTarget(modpackFolderPath);
+    await warnIfNoMods(modpackFolderPath);
+
     if (cleanScripts) {
         log.info('Removing startup scripts (.sh / .bat)...');
         const entries = await fs.readdir(modpackFolderPath);
@@ -380,7 +408,20 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
         }
     }
 
-    return { folder: modpackFolderPath, loader };
+    return { folder: modpackFolderPath, loader, mods: modsReport };
+}
+
+/** A modpack install that ends with an empty mods/ folder almost always means the pack content was never fetched. */
+async function warnIfNoMods(dir: string): Promise<void> {
+    const modsDir = path.join(dir, 'mods');
+    const mods = (await fs.pathExists(modsDir))
+        ? (await fs.readdir(modsDir)).filter(f => f.endsWith('.jar'))
+        : [];
+    if (mods.length === 0) {
+        log.warn('mods/ is empty after install. The server will start without the pack\'s mods.');
+    } else {
+        log.info(`${mods.length} mod jars in mods/.`);
+    }
 }
 
 /**

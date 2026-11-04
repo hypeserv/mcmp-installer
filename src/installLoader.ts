@@ -18,9 +18,10 @@ interface FabricInstallerMeta {
  * Supports Forge, NeoForge, and Fabric.
  */
 export async function installLoader(
-    info: LoaderInfo,
+    requested: LoaderInfo,
     targetDir: string
-): Promise<void> {
+): Promise<LoaderInfo> {
+    const info = applyLoaderCompatFixes(requested);
     // Many server packs ship the loader pre-installed (their run.sh just
     // launches it). If the loader artifacts are already on disk, skip the
     // download + --installServer step and only ensure the runtime files are
@@ -30,7 +31,7 @@ export async function installLoader(
             `${info.kind} ${info.loaderVersion} already present in libraries, skipping install.`
         );
         await copyLoaderRuntimeFiles(info, targetDir);
-        return;
+        return info;
     }
 
     switch (info.kind) {
@@ -45,6 +46,36 @@ export async function installLoader(
             break;
     }
     await copyLoaderRuntimeFiles(info, targetDir);
+    return info;
+}
+
+/**
+ * Forge 1.16.5 before 36.2.26 (modlauncher < 8.1.3) calls a JDK-internal
+ * constructor that was removed in Java 8u321 / 11.0.14, so it cannot start
+ * on any current Java. Same 36.2.x line, so mods stay compatible.
+ */
+const FORGE_1165_MIN = '36.2.26';
+const FORGE_1165_REPLACEMENT = '36.2.34';
+
+export function applyLoaderCompatFixes(info: LoaderInfo): LoaderInfo {
+    if (info.kind === 'forge' && info.mcVersion === '1.16.5' && compareVersions(info.loaderVersion, FORGE_1165_MIN) < 0) {
+        log.warn(
+            `Pack pins Forge ${info.loaderVersion}, which cannot start on current Java 8/11 builds. ` +
+            `Installing Forge ${FORGE_1165_REPLACEMENT} (same 36.2.x line) instead.`
+        );
+        return { ...info, loaderVersion: FORGE_1165_REPLACEMENT };
+    }
+    return info;
+}
+
+export function compareVersions(a: string, b: string): number {
+    const pa = a.split(/[.-]/).map(n => parseInt(n, 10) || 0);
+    const pb = b.split(/[.-]/).map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+        if (d) return d;
+    }
+    return 0;
 }
 
 /**
