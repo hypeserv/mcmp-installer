@@ -1,20 +1,23 @@
 import { resolveModpack, ResolvedDownloadKind } from './resolveModpack.js';
 
-/** `curse` is kept as an alias of `curseforge`. */
-export type Provider = 'curseforge' | 'curse' | 'modrinth' | 'ftb' | 'technic' | 'direct';
-export type CanonicalProvider = Exclude<Provider, 'curse'>;
+/** `curse` is an alias of `curseforge`, `feed-the-beast` of `ftb`. */
+export type Provider = 'curseforge' | 'curse' | 'modrinth' | 'ftb' | 'feed-the-beast' | 'technic' | 'direct';
+export type CanonicalProvider = Exclude<Provider, 'curse' | 'feed-the-beast'>;
 
 export const PROVIDERS: readonly Provider[] = [
     'curseforge',
     'curse',
     'modrinth',
     'ftb',
+    'feed-the-beast',
     'technic',
     'direct'
 ];
 
 export function normalizeProvider(provider: Provider): CanonicalProvider {
-    return provider === 'curse' ? 'curseforge' : provider;
+    if (provider === 'curse') return 'curseforge';
+    if (provider === 'feed-the-beast') return 'ftb';
+    return provider;
 }
 
 export interface ModpackSource {
@@ -44,7 +47,8 @@ export async function getModpackSource(
                 loader: null
             };
         case 'curseforge':
-        case 'modrinth': {
+        case 'modrinth':
+        case 'ftb': {
             const r = await resolveModpack(resolverUrl, provider, modpackId, modpackVersion, resolverToken);
             return {
                 name: r.name,
@@ -55,7 +59,6 @@ export async function getModpackSource(
                 loader: r.loader
             };
         }
-        case 'ftb':
         case 'technic':
             throw new Error(
                 `Provider "${provider}" is not supported yet. ` +

@@ -3,7 +3,7 @@ import axios, { AxiosError } from 'axios';
 /** Used when neither --resolver-url nor MODPACK_MAGIC_URL is set. */
 export const DEFAULT_RESOLVER_URL = 'https://modpack-magic.hypeserv.com';
 
-export type ResolvedDownloadKind = 'serverpack' | 'client-manifest' | 'mrpack';
+export type ResolvedDownloadKind = 'serverpack' | 'client-manifest' | 'mrpack' | 'ftb-manifest';
 
 /** Response of modpack-magic GET /api/v1/games/minecraft/:provider/modpacks/:id/resolve */
 export interface ResolvedModpack {
@@ -18,7 +18,7 @@ export interface ResolvedModpack {
     };
 }
 
-const KINDS: readonly ResolvedDownloadKind[] = ['serverpack', 'client-manifest', 'mrpack'];
+const KINDS: readonly ResolvedDownloadKind[] = ['serverpack', 'client-manifest', 'mrpack', 'ftb-manifest'];
 
 export function getResolverUrl(flag: string | false | undefined): string {
     const raw = flag || process.env.MODPACK_MAGIC_URL || DEFAULT_RESOLVER_URL;
@@ -37,7 +37,7 @@ export function getResolverToken(flag: string | false | undefined): string | nul
  */
 export async function resolveModpack(
     resolverUrl: string,
-    provider: 'curseforge' | 'modrinth',
+    provider: 'curseforge' | 'modrinth' | 'ftb',
     modpackId: string,
     version: string | false,
     token: string | null = null

@@ -28,7 +28,7 @@ async function main(): Promise<void> {
         .option('provider', {
             type: 'string',
             choices: PROVIDERS as Provider[],
-            describe: 'curseforge (alias curse) | modrinth | direct. ftb / technic are not supported yet.',
+            describe: 'curseforge (alias curse) | modrinth | ftb (alias feed-the-beast) | direct. technic is not supported yet.',
             demandOption: false
         })
         .option('modpack-id', {

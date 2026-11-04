@@ -23,7 +23,7 @@ export function fallbackFileUrl(fileId: number, fileName: string): string {
     return `${base}/files/${Math.floor(fileId / 1000)}/${fileId % 1000}/${encodeURIComponent(fileName)}`;
 }
 
-interface HypesrvFileInfo {
+export interface HypesrvFileInfo {
     id?: number;
     downloadUrl?: string;
     displayName?: string;
@@ -34,6 +34,24 @@ interface HypesrvResponse {
     data?: HypesrvFileInfo;
 }
 
+/** File info from the HypeServ mod API (CurseForge mirror). */
+export async function fetchModFileInfo(
+    projectId: number,
+    fileId: number,
+    apiKey: string | false
+): Promise<HypesrvFileInfo | undefined> {
+    const apiBase = process.env.MCI_MOD_API_BASE || 'https://api.hypeserv.com';
+    const url = `${apiBase}/v3/modpack/fileUrl/${projectId}/${fileId}`;
+    const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
+    const resp = await axios.get<HypesrvResponse>(url, { timeout: 60000, headers });
+    return resp.data?.data;
+}
+
+/** Download URL for a CurseForge file: the API's URL, else the fallback. */
+export function curseForgeFileUrl(info: HypesrvFileInfo, fileId: number, fileName: string): string {
+    return info.downloadUrl || fallbackFileUrl(Number(info.id ?? fileId), fileName);
+}
+
 export interface ManifestModRef {
     projectId: number;
     fileId: number;
@@ -42,7 +60,7 @@ export interface ManifestModRef {
 
 /** What the manifest step did; written to .hypeserv/modpack.json for the panel. */
 export interface ManifestModsReport {
-    source: 'manifest';
+    source: 'manifest' | 'ftb';
     total: number;
     installed: number;
     /** Author disabled third-party distribution; `installed` = fetched via fallback. */
@@ -72,16 +90,7 @@ export async function downloadManifestMods(
         const ref: ManifestModRef = { projectId: Number(modId), fileId: Number(fileId), fileName: null };
         let restricted = false;
         try {
-            const apiBase = process.env.MCI_MOD_API_BASE || 'https://api.hypeserv.com';
-            const url = `${apiBase}/v3/modpack/fileUrl/${modId}/${fileId}`;
-            const headers: Record<string, string> = apiKey
-                ? { Authorization: `Bearer ${apiKey}` }
-                : {};
-            const resp = await axios.get<HypesrvResponse>(url, {
-                timeout: 60000,
-                headers
-            });
-            const info = resp.data?.data;
+            const info = await fetchModFileInfo(Number(modId), Number(fileId), apiKey);
             if (!info?.fileName && !info?.downloadUrl) {
                 report.failed.push({ ...ref, reason: 'no file info from the mod API' });
                 progress.fail(label, 'no file info from the mod API');
@@ -95,7 +104,7 @@ export async function downloadManifestMods(
                 continue;
             }
             restricted = !info.downloadUrl;
-            const fileUrl = info.downloadUrl || fallbackFileUrl(Number(info.id ?? fileId), name);
+            const fileUrl = curseForgeFileUrl(info, Number(fileId), name);
             await download(fileUrl, { fileName: name, quiet: true });
             downloaded.add(name);
             if (restricted) report.restricted.push({ ...ref, installed: true });

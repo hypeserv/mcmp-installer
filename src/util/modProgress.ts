@@ -15,7 +15,17 @@ export class ModProgress {
     private countedSkips = 0;
     private readonly bar?: cliProgress.SingleBar;
 
-    constructor(private readonly total: number, private readonly label = 'Mods') {
+    private lastPrintedPct = -1;
+
+    /**
+     * stepPct: on non-terminals, print only when the percentage advanced by at
+     * least this much (0 = a line per file). Large packs (FTB: 2000+ files) use 1.
+     */
+    constructor(
+        private readonly total: number,
+        private readonly label = 'Mods',
+        private readonly stepPct = 0
+    ) {
         if (process.stdout.isTTY && total > 0) {
             this.bar = new cliProgress.SingleBar(
                 { format: `${label} [{bar}] {value}/{total} ({percentage}%) {file}`, hideCursor: true },
@@ -66,6 +76,8 @@ export class ModProgress {
             return;
         }
         const pct = this.total ? Math.floor((this.done / this.total) * 100) : 100;
+        if (this.stepPct > 0 && this.done < this.total && pct < this.lastPrintedPct + this.stepPct) return;
+        this.lastPrintedPct = pct;
         const filled = this.total ? Math.round((this.done / this.total) * WIDTH) : WIDTH;
         log.info(`${this.label} [${'#'.repeat(filled)}${'-'.repeat(WIDTH - filled)}] ${this.done}/${this.total} (${pct}%) ${file}`);
     }

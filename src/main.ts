@@ -28,6 +28,7 @@ import { installLoader } from './installLoader.js';
 import { ensureStartTarget } from './ensureStartTarget.js';
 import { guessLoaderFromMods, loaderFromInstallerJar } from './guessLoader.js';
 import { findPackwizPackUrl, runPackwiz } from './packwiz.js';
+import { installFtbManifest } from './ftb.js';
 import {
     parseVariablesTxt,
     variablesToLoaderInfo
@@ -130,7 +131,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
     } else {
         const resolverUrl = getResolverUrl(opts.resolverUrl);
         const resolverToken = getResolverToken(opts.resolverToken);
-        if (provider === 'curseforge' || provider === 'modrinth') {
+        if (provider === 'curseforge' || provider === 'modrinth' || provider === 'ftb') {
             log.info(
                 `Resolving ${provider} modpack ${modpackId} via ${resolverUrl}` +
                 (resolverToken ? ' (with auth token)...' : '...')
@@ -158,23 +159,37 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
         process.exit(1);
     }
 
-    const filename = wgetMode
-        ? await downloadWgetStyle(source.downloadUrl)
-        : await download(source.downloadUrl);
-    const modpackName = wgetMode
-        ? deriveNameFromFilename(filename) || source.name
-        : source.name;
+    let result: InstallPipelineResult;
+    let modpackName: string;
+    if (source.kind === 'ftb-manifest') {
+        modpackName = source.name;
+        result = await runFtbPipeline({
+            manifestUrl: source.downloadUrl,
+            folder: path.join(thisDir, explicitFolderName || modpackName.replace(/[:,\s/\\]/g, '_')),
+            thisDir,
+            update,
+            manifestApiKey,
+            cleanScripts
+        });
+    } else {
+        const filename = wgetMode
+            ? await downloadWgetStyle(source.downloadUrl)
+            : await download(source.downloadUrl);
+        modpackName = wgetMode
+            ? deriveNameFromFilename(filename) || source.name
+            : source.name;
 
-    const result = await runInstallPipeline({
-        filename,
-        modpackName,
-        thisDir,
-        explicitFolderName: explicitFolderName || false,
-        update,
-        manifestApiKey,
-        cleanScripts,
-        mcVersionHint: source.mcVersion
-    });
+        result = await runInstallPipeline({
+            filename,
+            modpackName,
+            thisDir,
+            explicitFolderName: explicitFolderName || false,
+            update,
+            manifestApiKey,
+            cleanScripts,
+            mcVersionHint: source.mcVersion
+        });
+    }
 
     let finalDir = result.folder;
     if (wings) {
@@ -312,17 +327,7 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
         await deleteDirectory(existingSubdir);
     }
 
-    if (update) {
-        log.info('Update mode enabled. Cleaning old mods and libraries...');
-        const patterns = ['libraries', 'mods', 'coremods', '.fabric'];
-        for (const p of patterns) {
-            const full = path.join(thisDir, p);
-            if (await fs.pathExists(full)) {
-                log.info(`Deleting ${full}...`);
-                await deleteTreeDirectory(full);
-            }
-        }
-    }
+    if (update) await cleanForUpdate(thisDir);
 
     let modsReport: ManifestModsReport | null = null;
     const packwizUrl = await findPackwizPackUrl(modpackFolderPath);
@@ -398,17 +403,63 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
     await ensureStartTarget(modpackFolderPath);
     await warnIfNoMods(modpackFolderPath);
 
-    if (cleanScripts) {
-        log.info('Removing startup scripts (.sh / .bat)...');
-        const entries = await fs.readdir(modpackFolderPath);
-        for (const e of entries) {
-            if (e.endsWith('.sh') || e.endsWith('.bat')) {
-                await fs.remove(path.join(modpackFolderPath, e));
-            }
-        }
-    }
+    if (cleanScripts) await removeStartScripts(modpackFolderPath);
 
     return { folder: modpackFolderPath, loader, mods: modsReport };
+}
+
+async function cleanForUpdate(thisDir: string): Promise<void> {
+    log.info('Update mode enabled. Cleaning old mods and libraries...');
+    for (const p of ['libraries', 'mods', 'coremods', '.fabric']) {
+        const full = path.join(thisDir, p);
+        if (await fs.pathExists(full)) {
+            log.info(`Deleting ${full}...`);
+            await deleteTreeDirectory(full);
+        }
+    }
+}
+
+async function removeStartScripts(dir: string): Promise<void> {
+    log.info('Removing startup scripts (.sh / .bat)...');
+    for (const e of await fs.readdir(dir)) {
+        if (e.endsWith('.sh') || e.endsWith('.bat')) await fs.remove(path.join(dir, e));
+    }
+}
+
+interface FtbPipelineInput {
+    manifestUrl: string;
+    folder: string;
+    thisDir: string;
+    update: boolean;
+    manifestApiKey: string | false;
+    cleanScripts: boolean;
+}
+
+/** FTB packs: files come from the version manifest, the loader from its targets. */
+async function runFtbPipeline(input: FtbPipelineInput): Promise<InstallPipelineResult> {
+    const { manifestUrl, folder, thisDir, update, manifestApiKey, cleanScripts } = input;
+    if (update) await cleanForUpdate(thisDir);
+    await fs.ensureDir(folder);
+
+    const ftb = await installFtbManifest(manifestUrl, folder, manifestApiKey);
+    let loader = ftb.loader;
+    if (loader) {
+        log.info(`Installing ${loader.kind} ${loader.loaderVersion} (MC ${loader.mcVersion}) from the FTB manifest...`);
+        try {
+            loader = await installLoader(loader, folder);
+            log.info(`${loader.kind} install finished.`);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.warn(`Loader install failed: ${msg}`);
+        }
+    } else {
+        log.warn('FTB manifest names no mod loader; installing files only.');
+    }
+
+    await ensureStartTarget(folder);
+    await warnIfNoMods(folder);
+    if (cleanScripts) await removeStartScripts(folder);
+    return { folder, loader, mods: ftb.mods };
 }
 
 /** A modpack install that ends with an empty mods/ folder almost always means the pack content was never fetched. */

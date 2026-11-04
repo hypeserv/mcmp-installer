@@ -22,9 +22,11 @@ export interface DownloadOptions {
     fileName?: string;
     /** No "Finished downloading" line (callers that report their own progress). */
     quiet?: boolean;
+    /** Target directory (default: current directory). Use this for parallel downloads. */
+    dir?: string;
 }
 
-const DEFAULTS: Required<Omit<DownloadOptions, 'fileName' | 'quiet'>> = {
+const DEFAULTS: Required<Omit<DownloadOptions, 'fileName' | 'quiet' | 'dir'>> = {
     attempts: 5,
     stallMs: 60_000,
     backoffMs: attempt => Math.min(30_000, 2_000 * 2 ** (attempt - 1))
@@ -56,8 +58,9 @@ export async function download(url: string, options: DownloadOptions = {}): Prom
     let fileName: string = options.fileName || url.split('/').pop()?.split('?')[0] || 'modpack.zip';
     if (!fileName) fileName = 'download.bin';
 
-    await fs.ensureDir(process.cwd());
-    const destPath = path.join(process.cwd(), fileName);
+    const dir = options.dir || process.cwd();
+    await fs.ensureDir(dir);
+    const destPath = path.join(dir, fileName);
     await fs.remove(destPath);
 
     let lastError: unknown;

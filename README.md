@@ -15,6 +15,7 @@ No install required — run the latest published version directly:
 ```bash
 npx -y @hypeserv/mcmp-installer --provider modrinth --modpack-id <slug>
 npx -y @hypeserv/mcmp-installer --provider curseforge --modpack-id 925200
+npx -y @hypeserv/mcmp-installer --provider ftb --modpack-id 126
 ```
 
 Direct zip URL:
@@ -47,9 +48,9 @@ mcmp-installer --wget-mode --modpack-id https://example.com/pack.zip
 ## Flags
 | flag | description |
 |---|---|
-| `--provider` | `curseforge` (alias `curse`) \| `modrinth` \| `direct`. Required unless `--wget-mode`. `ftb` and `technic` are not supported yet: use `--wget-mode` with a serverpack URL. |
-| `--modpack-id` | CurseForge project id, Modrinth slug/id, or a URL for `direct`. In `--wget-mode` this is a direct zip URL. |
-| `--modpack-version` | CurseForge file id / Modrinth version id to install. Latest release if omitted. Not used for `direct`. |
+| `--provider` | `curseforge` (alias `curse`) \| `modrinth` \| `ftb` (alias `feed-the-beast`) \| `direct`. Required unless `--wget-mode`. `technic` is not supported yet: use `--wget-mode` with a serverpack URL. |
+| `--modpack-id` | CurseForge project id, Modrinth slug/id, FTB pack id, or a URL for `direct`. In `--wget-mode` this is a direct zip URL. |
+| `--modpack-version` | CurseForge file id / Modrinth version id / FTB version id to install. Latest release if omitted. Not used for `direct`. |
 | `--resolver-url <url>` | modpack-magic base URL. Falls back to `MODPACK_MAGIC_URL`, then `https://modpack-magic.hypeserv.com`. |
 | `--wget-mode` | Skip provider parsing — treat `--modpack-id` as a direct zip URL (HEAD redirect resolved). |
 | `--wings` | Flatten install into the working dir instead of a modpack subfolder. Use with panel daemons (e.g. [Pterodactyl Wings](https://github.com/pterodactyl/wings)). |
@@ -96,6 +97,7 @@ Installs that download mods from a CurseForge `manifest.json` also add a `mods` 
 ## What it handles
 - Standard CurseForge serverpacks (with/without bundled loader; packs without a loader get one from a shipped installer jar or inferred from the mods)
 - CurseForge client packs without a server pack (mods via the manifest API, plus `overrides/`)
+- FTB packs (numeric pack / version ids): files from the FTB version manifest with size + sha1 check, client-only files skipped, exact loader version from the manifest
 - Modrinth `.mrpack` (files at their index paths, client-only files skipped, overrides + dependencies)
 - packwiz bootstrap server packs (runs packwiz-installer at install time)
 - Client-only mods removed on manifest installs (jar metadata + a curated list; kept when another mod requires them)
