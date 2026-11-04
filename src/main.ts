@@ -12,7 +12,8 @@ import {
     Provider
 } from './getModpackInfo.js';
 import { getResolverUrl, getResolverToken } from './resolveModpack.js';
-import { downloadManifestMods, ManifestModsReport } from './downloadManifestMods.js';
+import { downloadManifestMods, manifestNeedsLookup, ManifestModsReport } from './downloadManifestMods.js';
+import { CfLookup } from './cfFiles.js';
 import {
     downloadModrinthMods,
     moveModrinthOverrides,
@@ -48,7 +49,6 @@ export interface InstallerOptions {
     update: boolean;
     folderName: string | false;
     workingPath: string | false;
-    manifestApiKey: string | false;
     wgetMode: boolean;
     resolverUrl: string | false;
     /** Bearer token for modpack-magic (falls back to MODPACK_MAGIC_TOKEN). Never logged. */
@@ -63,7 +63,8 @@ interface InstallPipelineInput {
     thisDir: string;
     explicitFolderName: string | false;
     update: boolean;
-    manifestApiKey: string | false;
+    /** modpack-magic files lookup for CurseForge manifest files. */
+    cfLookup: CfLookup;
     cleanScripts: boolean;
     /** MC version from the resolver, used when the pack itself has no loader info. */
     mcVersionHint: string | null;
@@ -97,9 +98,13 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
         update,
         folderName: explicitFolderName,
         workingPath,
-        manifestApiKey,
         wgetMode
     } = opts;
+    // Both flows (provider and wget-mode) use modpack-magic for CurseForge file lookups.
+    const cfLookup: CfLookup = {
+        resolverUrl: getResolverUrl(opts.resolverUrl),
+        token: getResolverToken(opts.resolverToken)
+    };
 
     const operatingSystem = os.platform().startsWith('win') ? 'Windows' : 'Linux';
     log.info(`Detected OS ${operatingSystem}, arch ${os.arch()}`);
@@ -129,8 +134,8 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
             loader: null
         };
     } else {
-        const resolverUrl = getResolverUrl(opts.resolverUrl);
-        const resolverToken = getResolverToken(opts.resolverToken);
+        const resolverUrl = cfLookup.resolverUrl;
+        const resolverToken = cfLookup.token;
         if (provider === 'curseforge' || provider === 'modrinth' || provider === 'ftb') {
             log.info(
                 `Resolving ${provider} modpack ${modpackId} via ${resolverUrl}` +
@@ -146,10 +151,11 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
             (source.versionId ? ')' : '')
         );
         if (source.kind) log.info(`Download kind: ${source.kind}`);
-        if (source.kind === 'client-manifest' && !manifestApiKey) {
-            log.warn(
-                'Pack has no server pack, only a client manifest. ' +
-                'Mods are downloaded through the manifest API, which needs --manifest-api-key.'
+        if (source.kind === 'client-manifest' && !cfLookup.token) {
+            // Fail before the download: the mod lookup needs the token.
+            throw new Error(
+                'Pack has no server pack, only a client manifest. Its mods are looked up through modpack-magic, ' +
+                'which needs MODPACK_MAGIC_TOKEN (or --resolver-token).'
             );
         }
     }
@@ -168,7 +174,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
             folder: path.join(thisDir, explicitFolderName || modpackName.replace(/[:,\s/\\]/g, '_')),
             thisDir,
             update,
-            manifestApiKey,
+            cfLookup,
             cleanScripts
         });
     } else {
@@ -185,7 +191,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
             thisDir,
             explicitFolderName: explicitFolderName || false,
             update,
-            manifestApiKey,
+            cfLookup,
             cleanScripts,
             mcVersionHint: source.mcVersion
         });
@@ -288,7 +294,7 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
         thisDir,
         explicitFolderName,
         update,
-        manifestApiKey,
+        cfLookup,
         cleanScripts
     } = input;
 
@@ -336,13 +342,20 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
     }
 
     const manifestPath = path.join(modpackFolderPath, 'manifest.json');
-    if ((await fs.pathExists(manifestPath)) && manifestApiKey) {
-        log.info('Running manifest installer...');
-        const modsDir = path.join(modpackFolderPath, 'mods');
-        await fs.ensureDir(modsDir);
-        process.chdir(modsDir);
-        modsReport = await downloadManifestMods(manifestPath, manifestApiKey);
-        process.chdir(modpackFolderPath);
+    const modsDir = path.join(modpackFolderPath, 'mods');
+    if ((await fs.pathExists(manifestPath)) && (await manifestNeedsLookup(manifestPath))) {
+        if (!cfLookup.token && (await countModJars(modsDir)) > 0) {
+            // A server pack that also ships its manifest.json already has its mods.
+            log.warn('manifest.json found next to a populated mods/ and no modpack-magic token; keeping the shipped mods.');
+        } else {
+            log.info('Running manifest installer...');
+            await fs.ensureDir(modsDir);
+            modsReport = await downloadManifestMods(manifestPath, {
+                modsDir,
+                serverRoot: modpackFolderPath,
+                lookup: cfLookup
+            });
+        }
 
         // CurseForge client packs ship configs etc. in overrides/.
         const overridesPath = path.join(modpackFolderPath, 'overrides');
@@ -401,7 +414,10 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
     }
 
     await ensureStartTarget(modpackFolderPath);
-    await warnIfNoMods(modpackFolderPath);
+    // A manifest install with mods to fetch must not end with an empty mods/.
+    const expectsMods = !!modsReport &&
+        modsReport.total - modsReport.skipped.length - modsReport.datapacks.length > 0;
+    await checkMods(modpackFolderPath, expectsMods);
 
     if (cleanScripts) await removeStartScripts(modpackFolderPath);
 
@@ -431,17 +447,17 @@ interface FtbPipelineInput {
     folder: string;
     thisDir: string;
     update: boolean;
-    manifestApiKey: string | false;
+    cfLookup: CfLookup;
     cleanScripts: boolean;
 }
 
 /** FTB packs: files come from the version manifest, the loader from its targets. */
 async function runFtbPipeline(input: FtbPipelineInput): Promise<InstallPipelineResult> {
-    const { manifestUrl, folder, thisDir, update, manifestApiKey, cleanScripts } = input;
+    const { manifestUrl, folder, thisDir, update, cfLookup, cleanScripts } = input;
     if (update) await cleanForUpdate(thisDir);
     await fs.ensureDir(folder);
 
-    const ftb = await installFtbManifest(manifestUrl, folder, manifestApiKey);
+    const ftb = await installFtbManifest(manifestUrl, folder, cfLookup);
     let loader = ftb.loader;
     if (loader) {
         log.info(`Installing ${loader.kind} ${loader.loaderVersion} (MC ${loader.mcVersion}) from the FTB manifest...`);
@@ -457,21 +473,28 @@ async function runFtbPipeline(input: FtbPipelineInput): Promise<InstallPipelineR
     }
 
     await ensureStartTarget(folder);
-    await warnIfNoMods(folder);
+    await checkMods(folder, ftb.expectsMods);
     if (cleanScripts) await removeStartScripts(folder);
     return { folder, loader, mods: ftb.mods };
 }
 
-/** A modpack install that ends with an empty mods/ folder almost always means the pack content was never fetched. */
-async function warnIfNoMods(dir: string): Promise<void> {
-    const modsDir = path.join(dir, 'mods');
-    const mods = (await fs.pathExists(modsDir))
-        ? (await fs.readdir(modsDir)).filter(f => f.endsWith('.jar'))
-        : [];
-    if (mods.length === 0) {
-        log.warn('mods/ is empty after install. The server will start without the pack\'s mods.');
+async function countModJars(modsDir: string): Promise<number> {
+    if (!(await fs.pathExists(modsDir))) return 0;
+    return (await fs.readdir(modsDir)).filter(f => f.endsWith('.jar')).length;
+}
+
+/**
+ * An empty mods/ almost always means the pack content was never fetched.
+ * Fail when the pack said it has mods; otherwise only warn.
+ */
+async function checkMods(dir: string, expectsMods: boolean): Promise<void> {
+    const count = await countModJars(path.join(dir, 'mods'));
+    if (count > 0) {
+        log.info(`${count} mod jars in mods/.`);
+    } else if (expectsMods) {
+        throw new Error('mods/ is empty after install, but the pack lists mods. The install did not complete.');
     } else {
-        log.info(`${mods.length} mod jars in mods/.`);
+        log.warn('mods/ is empty after install. The server will start without mods.');
     }
 }
 

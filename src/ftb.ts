@@ -1,12 +1,10 @@
-import crypto from 'node:crypto';
 import path from 'node:path';
-import fs from 'fs-extra';
 import axios from 'axios';
-import { download } from './downloadFile.js';
 import { log } from './util/logger.js';
 import { ModProgress } from './util/modProgress.js';
 import { LoaderInfo, ModLoaderKind } from './getForgeOrFabricVersion.js';
-import { curseForgeFileUrl, fetchModFileInfo, ManifestModsReport } from './downloadManifestMods.js';
+import { curseForgeFileUrl, downloadVerified, emptyReport, ManifestModsReport } from './downloadManifestMods.js';
+import { CfFileInfo, CfFileRef, CfLookup, cfKey, lookupCurseForgeFiles } from './cfFiles.js';
 
 interface FtbFile {
     name: string;
@@ -39,6 +37,8 @@ export interface FtbInstallResult {
     loader: LoaderInfo | null;
     mcVersion: string | null;
     mods: ManifestModsReport;
+    /** The manifest lists server-side jars under mods/, so an empty mods/ means the install failed. */
+    expectsMods: boolean;
 }
 
 const CONCURRENCY = 8;
@@ -63,7 +63,7 @@ export function ftbLoader(version: FtbVersion): { loader: LoaderInfo | null; mcV
 export async function installFtbManifest(
     manifestUrl: string,
     root: string,
-    apiKey: string | false
+    lookup: CfLookup | null
 ): Promise<FtbInstallResult> {
     const resp = await axios.get<FtbVersion>(manifestUrl, { timeout: 60000, validateStatus: () => true });
     const version = resp.data;
@@ -79,11 +79,37 @@ export async function installFtbManifest(
     );
 
     const rootAbs = path.resolve(root);
-    const files = version.files.filter(f => !f.clientonly);
+    const serverFiles = version.files.filter(f => !f.clientonly);
     const clientOnly = version.files.filter(f => f.clientonly).map(f => f.name);
-    const report: ManifestModsReport = {
-        source: 'ftb', total: files.length, installed: 0, restricted: [], failed: [], clientOnlyRemoved: clientOnly
-    };
+    const report = emptyReport('ftb', serverFiles.length);
+    report.clientOnlyRemoved = clientOnly;
+
+    // Files without a URL come from CurseForge: look them all up before any download.
+    const cfRef = (f: FtbFile): CfFileRef | null =>
+        !f.url && f.curseforge?.project && f.curseforge?.file
+            ? { projectId: Number(f.curseforge.project), fileId: Number(f.curseforge.file) }
+            : null;
+    const cfRefs = serverFiles.map(cfRef).filter((r): r is CfFileRef => r !== null);
+    if (cfRefs.length) log.info(`Looking up ${cfRefs.length} CurseForge files...`);
+    const cf = await lookupCurseForgeFiles(cfRefs, lookup);
+    const missingRequired: string[] = [];
+    const files = serverFiles.filter(f => {
+        const ref = cfRef(f);
+        if (!ref || cf.files.has(cfKey(ref))) return true;
+        if (f.optional) {
+            report.skipped.push({ ...ref, fileName: f.name, type: 'missing (optional)' });
+            log.warn(`Optional file ${f.name} no longer exists on CurseForge, skipped.`);
+        } else {
+            missingRequired.push(`${f.name} (${cfKey(ref)})`);
+        }
+        return false;
+    });
+    if (missingRequired.length) {
+        throw new Error(`${missingRequired.length} FTB files no longer exist on CurseForge: ${missingRequired.join(', ')}`);
+    }
+    report.total = files.length;
+    const expectsMods = files.some(f => isModJar(f));
+
     log.info(`Downloading ${files.length} files (${clientOnly.length} client-only skipped)...`);
     const progress = new ModProgress(files.length, 'Files', 1);
 
@@ -92,7 +118,7 @@ export async function installFtbManifest(
         while (next < files.length) {
             const file = files[next++];
             try {
-                await installFtbFile(file, rootAbs, apiKey);
+                await installFtbFile(file, rootAbs, cf.files);
                 report.installed++;
                 progress.ok(file.name);
             } catch (err) {
@@ -110,10 +136,10 @@ export async function installFtbManifest(
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker));
     progress.finish();
-    return { loader, mcVersion, mods: report };
+    return { loader, mcVersion, mods: report, expectsMods };
 }
 
-async function installFtbFile(file: FtbFile, rootAbs: string, apiKey: string | false): Promise<void> {
+async function installFtbFile(file: FtbFile, rootAbs: string, cfFiles: Map<string, CfFileInfo>): Promise<void> {
     // path and name come from upstream: refuse anything outside the server root.
     const dir = path.resolve(rootAbs, file.path || '.');
     const dest = path.resolve(dir, file.name);
@@ -123,33 +149,16 @@ async function installFtbFile(file: FtbFile, rootAbs: string, apiKey: string | f
 
     let url = file.url;
     if (!url && file.curseforge?.project && file.curseforge?.file) {
-        const projectId = Number(file.curseforge.project);
-        const fileId = Number(file.curseforge.file);
-        const info = await fetchModFileInfo(projectId, fileId, apiKey);
-        if (!info) throw new Error(`no file info for CurseForge ${projectId}/${fileId}`);
-        url = curseForgeFileUrl(info, fileId, info.fileName || file.name);
+        const info = cfFiles.get(cfKey({ projectId: Number(file.curseforge.project), fileId: Number(file.curseforge.file) }));
+        if (info) url = curseForgeFileUrl(info);
     }
     if (!url) throw new Error('no download URL');
-
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        await download(url, { dir, fileName: file.name, quiet: true });
-        const problem = await verify(dest, file);
-        if (!problem) return;
-        await fs.remove(dest);
-        if (attempt === 2) throw new Error(problem);
-    }
+    await downloadVerified(url, dir, file.name, { size: file.size, sha1: file.sha1 });
 }
 
-async function verify(file: string, meta: FtbFile): Promise<string | null> {
-    const stat = await fs.stat(file);
-    if (meta.size && stat.size !== meta.size) return `size mismatch (${stat.size} != ${meta.size})`;
-    if (meta.sha1) {
-        const hash = crypto.createHash('sha1');
-        for await (const chunk of fs.createReadStream(file)) hash.update(chunk as Buffer);
-        const sha1 = hash.digest('hex');
-        if (sha1.toLowerCase() !== meta.sha1.toLowerCase()) return `sha1 mismatch (${sha1} != ${meta.sha1})`;
-    }
-    return null;
+function isModJar(f: FtbFile): boolean {
+    const dir = (f.path || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+    return dir === 'mods' && f.name.toLowerCase().endsWith('.jar');
 }
 
 function isInside(root: string, p: string): boolean {

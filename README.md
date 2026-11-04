@@ -54,13 +54,12 @@ mcmp-installer --wget-mode --modpack-id https://example.com/pack.zip
 | `--resolver-url <url>` | modpack-magic base URL. Falls back to `MODPACK_MAGIC_URL`, then `https://modpack-magic.hypeserv.com`. |
 | `--wget-mode` | Skip provider parsing — treat `--modpack-id` as a direct zip URL (HEAD redirect resolved). |
 | `--wings` | Flatten install into the working dir instead of a modpack subfolder. Use with panel daemons (e.g. [Pterodactyl Wings](https://github.com/pterodactyl/wings)). |
-| `--resolver-token <token>` | Bearer token for modpack-magic, sent as `Authorization: Bearer <token>` on the resolve call only. Falls back to `MODPACK_MAGIC_TOKEN`. Leave unset when modpack-magic runs without auth (the default). Prefer the env var: command-line args show up in the process list. The token is never logged. |
+| `--resolver-token <token>` | Bearer token for modpack-magic, sent as `Authorization: Bearer <token>` on the resolve call and the CurseForge file lookup. Falls back to `MODPACK_MAGIC_TOKEN`. Required for CurseForge client packs and FTB files hosted on CurseForge, in both the provider and `--wget-mode` flows; without it those installs fail. Prefer the env var: command-line args show up in the process list. The token is never logged. |
 | `--preserve-world` | With `--wings`: keep world dirs (`level-name`, `_nether`, `_the_end`, `world*`) and `server.properties` already in the working dir; the pack's copies are dropped. Use for reinstalls/updates that keep the world. |
 | `--working-path <dir>` | Directory to install into. Defaults to CWD. |
 | `--folder-name <name>` | Explicit output folder name (ignored in `--wings`). |
 | `--clean-scripts` | Remove `.sh` / `.bat` startup scripts after install. |
 | `--update` | Remove `/mods`, `/.fabric`, `/libraries`, `/coremods` before installing. |
-| `--manifest-api-key <key>` | API key for the hypeServ manifest mod download API. Needed for CurseForge packs without a server pack (client manifest only). |
 
 ## Install info
 
@@ -88,15 +87,17 @@ Installs that download mods from a CurseForge `manifest.json` also add a `mods` 
   "installed": 318,
   "restricted": [{ "projectId": 563734, "fileId": 3857874, "fileName": "BuildersDelight-1.18.2-v.1.0.jar", "installed": true }],
   "failed": [],
-  "clientOnlyRemoved": ["LegendaryTooltips-1.18.2-1.3.1.jar"]
+  "clientOnlyRemoved": ["LegendaryTooltips-1.18.2-1.3.1.jar"],
+  "skipped": [{ "projectId": 1, "fileId": 2, "fileName": "Complementary.zip", "type": "shader" }],
+  "datapacks": ["structures.zip"]
 }
 ```
 
-`restricted` lists mods whose authors disabled third-party distribution. `failed` lists mods that could not be installed, with a `reason`. `clientOnlyRemoved` lists client-only mods that were removed because they would crash a dedicated server.
+`restricted` lists mods whose authors disabled third-party distribution. `failed` lists mods that could not be installed, with a `reason`. `clientOnlyRemoved` lists client-only mods that were removed because they would crash a dedicated server. `skipped` lists files not installed on purpose (resourcepacks, shaders, other content, optional files that no longer exist). `datapacks` lists datapacks placed in `<level-name>/datapacks/`.
 
 ## What it handles
 - Standard CurseForge serverpacks (with/without bundled loader; packs without a loader get one from a shipped installer jar or inferred from the mods)
-- CurseForge client packs without a server pack (mods via the manifest API, plus `overrides/`)
+- CurseForge client packs without a server pack: all files looked up in one modpack-magic batch call before any download, mods into `mods/`, datapacks into `<level-name>/datapacks/`, resourcepacks and shaders skipped, sha1 checked, plus `overrides/`. The install fails (non-zero exit) when the token is missing, the lookup fails, a required file no longer exists, or `mods/` ends up empty.
 - FTB packs (numeric pack / version ids): files from the FTB version manifest with size + sha1 check, client-only files skipped, exact loader version from the manifest
 - Modrinth `.mrpack` (files at their index paths, client-only files skipped, overrides + dependencies)
 - packwiz bootstrap server packs (runs packwiz-installer at install time)

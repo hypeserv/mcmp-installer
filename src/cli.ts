@@ -14,7 +14,6 @@ interface CliArgs {
     update: boolean;
     'folder-name': string | false;
     'working-path': string | false;
-    'manifest-api-key': string | false;
     'wget-mode': boolean;
     'resolver-url': string | false;
     'preserve-world': boolean;
@@ -66,18 +65,13 @@ async function main(): Promise<void> {
             type: 'string',
             default: false as const
         })
-        .option('manifest-api-key', {
-            describe: 'API key for hypeserv manifest mod downloads',
-            type: 'string',
-            default: false as const
-        })
         .option('wget-mode', {
             describe: 'Skip provider parsing — treat --modpack-id as a direct zip URL (HEAD-resolved), download and install it',
             type: 'boolean',
             default: false
         })
         .option('resolver-url', {
-            describe: `modpack-magic base URL used to resolve curseforge / modrinth packs (env MODPACK_MAGIC_URL, default ${DEFAULT_RESOLVER_URL})`,
+            describe: `modpack-magic base URL used to resolve packs and look up CurseForge manifest files (env MODPACK_MAGIC_URL, default ${DEFAULT_RESOLVER_URL})`,
             type: 'string',
             default: false as const
         })
@@ -113,7 +107,6 @@ async function main(): Promise<void> {
         update: argv.update,
         folderName: argv['folder-name'] || false,
         workingPath: argv['working-path'] || false,
-        manifestApiKey: argv['manifest-api-key'] || false,
         wgetMode: argv['wget-mode'] || false,
         resolverUrl: argv['resolver-url'] || false,
         preserveWorld: argv['preserve-world'],

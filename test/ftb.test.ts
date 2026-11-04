@@ -38,8 +38,10 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
         { name: 'abs.jar', path: '/tmp', url: `${base}/blob/mod.jar` },
         { name: '../x.jar', path: './mods', url: `${base}/blob/mod.jar` },
         { name: 'bad.jar', path: './mods', url: `${base}/blob/bad.jar`, sha1: sha1(Buffer.from('expected')) },
-        { name: 'cfmod.jar', path: './mods', url: '', curseforge: { project: '1', file: '9009' } }
+        { name: 'cfmod.jar', path: './mods', url: '', curseforge: { project: '1', file: '9009' } },
+        { name: 'gone-optional.jar', path: './mods', url: '', optional: true, curseforge: { project: '2', file: '2002' } }
     ];
+    let lookups = 0;
     const server = http.createServer((req, res) => {
         const url = req.url || '';
         if (url === '/modpack/1/2') {
@@ -54,9 +56,20 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
             return;
         }
         if (url === '/modpack/1/404') { res.writeHead(404); res.end('{"status":"error"}'); return; }
-        // HypeServ mod API: restricted file without URL -> fallback layout
-        if (url === '/v3/modpack/fileUrl/1/9009') {
-            res.end(JSON.stringify({ success: true, data: { id: 9009, fileName: 'cfmod.jar', downloadUrl: null } }));
+        if (url === '/modpack/1/3') {
+            res.end(JSON.stringify({
+                status: 'success', targets: [],
+                files: [{ name: 'needed.jar', path: './mods', url: '', curseforge: { project: '3', file: '3003' } }]
+            }));
+            return;
+        }
+        // modpack-magic files lookup: restricted file without URL -> fallback layout
+        if (req.method === 'POST' && url === '/api/v1/games/minecraft/curseforge/files') {
+            lookups++;
+            res.end(JSON.stringify({
+                files: [{ projectId: 1, fileId: 9009, fileName: 'cfmod.jar', url: null, type: 'mod' }],
+                missing: [{ projectId: 2, fileId: 2002 }, { projectId: 3, fileId: 3003 }]
+            }));
             return;
         }
         const body = blobs[url];
@@ -65,7 +78,6 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
     });
     await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    process.env.MCI_MOD_API_BASE = base;
     process.env.MCI_FILE_FALLBACK_BASE = `${base}/cf`;
 
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'mcmp-ftb-'));
@@ -74,7 +86,7 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
     const origLog = console.log, origWarn = console.warn;
     console.log = () => undefined; console.warn = () => undefined;
     try {
-        const result = await installFtbManifest(`${base}/modpack/1/2`, root, false);
+        const result = await installFtbManifest(`${base}/modpack/1/2`, root, { resolverUrl: base, token: 'tok' });
 
         assert.deepEqual(result.loader, { kind: 'forge', mcVersion: '1.20.1', loaderVersion: '47.1.3' });
         assert.equal(await fs.readFile(path.join(root, 'mods/mod.jar'), 'utf8'), 'mod jar');
@@ -87,7 +99,10 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
         assert.equal(await fs.pathExists(path.join(root, 'mods/bad.jar')), false);
 
         assert.equal(result.mods.source, 'ftb');
+        assert.equal(lookups, 1);
+        assert.equal(result.expectsMods, true);
         assert.equal(result.mods.total, 7);
+        assert.deepEqual(result.mods.skipped.map(s => s.fileName), ['gone-optional.jar']);
         assert.equal(result.mods.installed, 3);
         assert.deepEqual(result.mods.clientOnlyRemoved, ['client.jar']);
         const failed = Object.fromEntries(result.mods.failed.map(f => [f.fileName, f.reason]));
@@ -96,10 +111,15 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
         assert.match(failed['../x.jar'], /outside the server root/);
         assert.match(failed['bad.jar'], /sha1 mismatch/);
 
-        await assert.rejects(installFtbManifest(`${base}/modpack/1/404`, root, false), /HTTP 404/);
+        await assert.rejects(installFtbManifest(`${base}/modpack/1/404`, root, null), /HTTP 404/);
+        await assert.rejects(installFtbManifest(`${base}/modpack/1/2`, root, null), /no modpack-magic token/);
+        await assert.rejects(
+            installFtbManifest(`${base}/modpack/1/3`, root, { resolverUrl: base, token: 'tok' }),
+            /1 FTB files no longer exist on CurseForge: needed.jar \(3\/3003\)/
+        );
     } finally {
         console.log = origLog; console.warn = origWarn;
-        delete process.env.MCI_MOD_API_BASE; delete process.env.MCI_FILE_FALLBACK_BASE;
+        delete process.env.MCI_FILE_FALLBACK_BASE;
         server.close();
         await fs.remove(parent);
     }
