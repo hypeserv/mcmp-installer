@@ -66,10 +66,16 @@ test('FTB manifest install: files, client-only skip, traversal guard, sha1 check
         // modpack-magic files lookup: restricted file without URL -> fallback layout
         if (req.method === 'POST' && url === '/api/v1/games/minecraft/curseforge/files') {
             lookups++;
+            let body = '';
+            req.on('data', c => { body += c; });
+            req.on('end', () => {
+                const sent = (JSON.parse(body) as { files: object[] }).files;
+                if (sent.some(f => Object.keys(f).sort().join() !== 'fileId,projectId')) { res.writeHead(400); res.end('{}'); return; }
             res.end(JSON.stringify({
                 files: [{ projectId: 1, fileId: 9009, fileName: 'cfmod.jar', url: null, type: 'mod' }],
                 missing: [{ projectId: 2, fileId: 2002 }, { projectId: 3, fileId: 3003 }]
             }));
+            });
             return;
         }
         const body = blobs[url];

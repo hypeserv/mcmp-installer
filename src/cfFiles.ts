@@ -40,7 +40,11 @@ export const cfKey = (ref: CfFileRef): string => `${ref.projectId}/${ref.fileId}
  */
 export async function lookupCurseForgeFiles(refs: CfFileRef[], lookup: CfLookup | null): Promise<CfLookupResult> {
     const result: CfLookupResult = { files: new Map(), missing: [] };
-    const unique = [...new Map(refs.map(r => [cfKey(r), r])).values()];
+    // Send only projectId + fileId: callers pass richer entries, and the endpoint validates its body.
+    const unique = [...new Map(refs.map(r => {
+        const ref: CfFileRef = { projectId: Number(r.projectId), fileId: Number(r.fileId) };
+        return [cfKey(ref), ref] as const;
+    })).values()];
     if (!unique.length) return result;
     if (!lookup?.resolverUrl || !lookup.token) {
         throw new Error(

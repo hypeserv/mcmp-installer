@@ -39,6 +39,9 @@ async function fakeServer(meta: Record<string, object>, blobs: Record<string, Bu
                 const { files } = JSON.parse(body) as { files: { projectId: number; fileId: number }[] };
                 calls.push({ auth: req.headers.authorization, files });
                 if (req.headers.authorization !== 'Bearer good') { res.writeHead(401); res.end('{}'); return; }
+                // Like modpack-magic: reject entries with keys other than projectId / fileId.
+                const extra = files.flatMap(f => Object.keys(f).filter(k => k !== 'projectId' && k !== 'fileId'));
+                if (extra.length) { res.writeHead(400); res.end(JSON.stringify({ error: `Unrecognized keys: ${[...new Set(extra)].join(', ')}` })); return; }
                 const found = files.filter(f => meta[`${f.projectId}/${f.fileId}`]);
                 const missing = files.filter(f => !meta[`${f.projectId}/${f.fileId}`]);
                 res.setHeader('content-type', 'application/json');
