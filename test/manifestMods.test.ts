@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import fs from 'fs-extra';
 import yazl from 'yazl';
-import { downloadManifestMods, fallbackFileUrl, readLevelName } from '../src/downloadManifestMods.js';
+import { downloadManifestMods, fallbackFileUrl, manifestStep, readLevelName } from '../src/downloadManifestMods.js';
 import { lookupCurseForgeFiles } from '../src/cfFiles.js';
 
 const sha1 = (b: Buffer): string => crypto.createHash('sha1').update(b).digest('hex');
@@ -189,5 +189,24 @@ test('lookup chunks at 1000 entries and dedupes', async () => {
         assert.equal(result.files.get('7/7')?.url, null);
     } finally {
         server.close();
+    }
+});
+
+test('manifest step: server pack with shipped mods is not downloaded again', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcmp-step-'));
+    const manifest = path.join(dir, 'manifest.json');
+    const mods = path.join(dir, 'mods');
+    try {
+        await fs.writeJson(manifest, { files: [] });
+        assert.equal(await manifestStep(manifest, mods), 'none');
+        await fs.writeJson(manifest, { files: [{ projectID: 1, fileID: 1001 }] });
+        assert.equal(await manifestStep(manifest, mods), 'download');
+        await fs.ensureDir(mods);
+        await fs.writeFile(path.join(mods, 'readme.txt'), 'x');
+        assert.equal(await manifestStep(manifest, mods), 'download');
+        await fs.writeFile(path.join(mods, 'shipped.jar'), 'x');
+        assert.equal(await manifestStep(manifest, mods), 'shipped');
+    } finally {
+        await fs.remove(dir);
     }
 });

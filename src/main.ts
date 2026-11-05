@@ -12,7 +12,7 @@ import {
     Provider
 } from './getModpackInfo.js';
 import { getResolverUrl, getResolverToken } from './resolveModpack.js';
-import { downloadManifestMods, manifestNeedsLookup, ManifestModsReport } from './downloadManifestMods.js';
+import { downloadManifestMods, manifestStep, ManifestModsReport } from './downloadManifestMods.js';
 import { CfLookup } from './cfFiles.js';
 import {
     downloadModrinthMods,
@@ -343,11 +343,12 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
 
     const manifestPath = path.join(modpackFolderPath, 'manifest.json');
     const modsDir = path.join(modpackFolderPath, 'mods');
-    if ((await fs.pathExists(manifestPath)) && (await manifestNeedsLookup(manifestPath))) {
-        if (!cfLookup.token && (await countModJars(modsDir)) > 0) {
-            // A server pack that also ships its manifest.json already has its mods.
-            log.warn('manifest.json found next to a populated mods/ and no modpack-magic token; keeping the shipped mods.');
-        } else {
+    if (await fs.pathExists(manifestPath)) {
+        const step = await manifestStep(manifestPath, modsDir);
+        if (step === 'shipped') {
+            // Server packs often ship their manifest.json too; their mods are already there.
+            log.info('Pack already contains mods/ next to manifest.json (server pack); not downloading manifest mods.');
+        } else if (step === 'download') {
             log.info('Running manifest installer...');
             await fs.ensureDir(modsDir);
             modsReport = await downloadManifestMods(manifestPath, {

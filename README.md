@@ -97,7 +97,7 @@ Installs that download mods from a CurseForge `manifest.json` also add a `mods` 
 
 ## What it handles
 - Standard CurseForge serverpacks (with/without bundled loader; packs without a loader get one from a shipped installer jar or inferred from the mods)
-- CurseForge client packs without a server pack: all files looked up in one modpack-magic batch call before any download, mods into `mods/`, datapacks into `<level-name>/datapacks/`, resourcepacks and shaders skipped, sha1 checked, plus `overrides/`. The install fails (non-zero exit) when the token is missing, the lookup fails, a required file no longer exists, or `mods/` ends up empty.
+- CurseForge client packs without a server pack: all files looked up in one modpack-magic batch call before any download, mods into `mods/`, datapacks into `<level-name>/datapacks/`, resourcepacks and shaders skipped, sha1 checked, plus `overrides/`. The install fails (non-zero exit) when the token is missing, the lookup fails, a required file no longer exists, or `mods/` ends up empty. Server packs that ship a `manifest.json` next to a filled `mods/` keep their mods; nothing is downloaded again.
 - FTB packs (numeric pack / version ids): files from the FTB version manifest with size + sha1 check, client-only files skipped, exact loader version from the manifest
 - Modrinth `.mrpack` (files at their index paths, client-only files skipped, overrides + dependencies)
 - packwiz bootstrap server packs (runs packwiz-installer at install time)

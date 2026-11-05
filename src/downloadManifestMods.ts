@@ -55,9 +55,18 @@ export function emptyReport(source: ManifestModsReport['source'], total: number)
     return { source, total, installed: 0, restricted: [], failed: [], clientOnlyRemoved: [], skipped: [], datapacks: [] };
 }
 
-/** True when the manifest lists CurseForge files that need a lookup. */
-export async function manifestNeedsLookup(manifestPath: string): Promise<boolean> {
-    return (await readEntries(manifestPath)).length > 0;
+/**
+ * What to do with a pack's manifest.json:
+ * - none: it lists no CurseForge files
+ * - shipped: mods/ already has jars (a server pack that also ships its manifest), keep them
+ * - download: a client pack, fetch the listed files
+ */
+export async function manifestStep(manifestPath: string, modsDir: string): Promise<'none' | 'shipped' | 'download'> {
+    if ((await readEntries(manifestPath)).length === 0) return 'none';
+    const jars = (await fs.pathExists(modsDir))
+        ? (await fs.readdir(modsDir)).filter(f => f.toLowerCase().endsWith('.jar'))
+        : [];
+    return jars.length > 0 ? 'shipped' : 'download';
 }
 
 async function readEntries(manifestPath: string): Promise<(ManifestModRef & { required: boolean })[]> {
