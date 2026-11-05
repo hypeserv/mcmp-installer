@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import fs from 'fs-extra';
 import { download } from './downloadFile.js';
 import { log } from './util/logger.js';
+import { javaEnv } from './util/safeName.js';
 
 const BOOTSTRAP_URL =
     'https://github.com/packwiz/packwiz-installer-bootstrap/releases/download/v0.0.3/packwiz-installer-bootstrap.jar';
@@ -61,6 +62,7 @@ export async function runPackwiz(dir: string, packUrl: string): Promise<void> {
 
     const code = await new Promise<number | null>((resolve, reject) => {
         const proc = spawn('java', ['-jar', 'packwiz-installer-bootstrap.jar', '-g', '-s', 'server', packUrl], {
+            env: javaEnv(),
             cwd: dir,
             stdio: 'inherit'
         });

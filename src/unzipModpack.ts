@@ -3,6 +3,7 @@ import { pipeline } from 'node:stream/promises';
 import fs from 'fs-extra';
 import yauzl from 'yauzl';
 import { log } from './util/logger.js';
+import { safeFolderName } from './util/safeName.js';
 
 export async function unzip(
     zipName: string,
@@ -13,7 +14,7 @@ export async function unzip(
 ): Promise<string> {
     let extractDir = path.join(
         thisDir,
-        output || modpackName.replace(/[:,\s]/g, '_')
+        output || safeFolderName(modpackName)
     );
 
     const archive = path.join(thisDir, zipName);

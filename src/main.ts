@@ -39,6 +39,7 @@ import {
     deleteDirectory,
     deleteTreeDirectory
 } from './util/fsHelpers.js';
+import { safeFolderName } from './util/safeName.js';
 
 export interface InstallerOptions {
     provider?: Provider;
@@ -171,7 +172,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
         modpackName = source.name;
         result = await runFtbPipeline({
             manifestUrl: source.downloadUrl,
-            folder: path.join(thisDir, explicitFolderName || modpackName.replace(/[:,\s/\\]/g, '_')),
+            folder: path.join(thisDir, explicitFolderName || safeFolderName(modpackName)),
             thisDir,
             update,
             cfLookup,
@@ -284,7 +285,7 @@ async function existingWorldEntries(serverRoot: string): Promise<Set<string>> {
 function deriveNameFromFilename(filename: string): string | null {
     const base = path.basename(filename, path.extname(filename));
     if (!base) return null;
-    return base.replace(/[:,\s]/g, '_');
+    return safeFolderName(base);
 }
 
 async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallPipelineResult> {

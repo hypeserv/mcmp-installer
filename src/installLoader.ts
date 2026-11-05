@@ -5,6 +5,7 @@ import axios from 'axios';
 import { download } from './downloadFile.js';
 import { log } from './util/logger.js';
 import { LoaderInfo } from './getForgeOrFabricVersion.js';
+import { javaEnv } from './util/safeName.js';
 
 interface FabricInstallerMeta {
     version: string;
@@ -193,8 +194,11 @@ async function installForge(
     log.info(`Downloading Forge installer ${fullVer}...`);
 
     const dest = await downloadInto(url, targetDir, 'forge-installer.jar');
-    await runJavaInstaller(dest, ['--installServer'], targetDir);
-    await cleanupInstaller(dest);
+    try {
+        await runJavaInstaller(dest, ['--installServer'], targetDir);
+    } finally {
+        await cleanupInstaller(dest);
+    }
 }
 
 async function installNeoForge(
@@ -216,8 +220,11 @@ async function installNeoForge(
     log.info(`Downloading NeoForge installer ${loaderVersion} (MC ${mcVersion})...`);
 
     const dest = await downloadInto(url, targetDir, 'neoforge-installer.jar');
-    await runJavaInstaller(dest, ['--installServer'], targetDir);
-    await cleanupInstaller(dest);
+    try {
+        await runJavaInstaller(dest, ['--installServer'], targetDir);
+    } finally {
+        await cleanupInstaller(dest);
+    }
 }
 
 async function installFabric(
@@ -230,12 +237,15 @@ async function installFabric(
     log.info(`Downloading Fabric installer ${installerVersion}...`);
 
     const dest = await downloadInto(url, targetDir, 'fabric-installer.jar');
-    await runJavaInstaller(
-        dest,
-        ['server', '-mcversion', mcVersion, '-loader', loaderVersion, '-downloadMinecraft'],
-        targetDir
-    );
-    await cleanupInstaller(dest);
+    try {
+        await runJavaInstaller(
+            dest,
+            ['server', '-mcversion', mcVersion, '-loader', loaderVersion, '-downloadMinecraft'],
+            targetDir
+        );
+    } finally {
+        await cleanupInstaller(dest);
+    }
 }
 
 async function getLatestFabricInstallerVersion(): Promise<string> {
@@ -288,14 +298,15 @@ async function runJavaInstaller(
         log.info(`Running: java -jar ${path.basename(jar)} ${args.join(' ')}`);
         const proc = spawn('java', ['-jar', jar, ...args], {
             cwd,
+            env: javaEnv(),
             stdio: 'inherit'
         });
         proc.on('exit', (code: number | null) => {
             if (code === 0) {
                 resolve();
             } else {
-                log.warn(`Loader installer exited with code ${code}, continuing.`);
-                resolve();
+                // The caller logs this and goes on; the start-target check decides if the install failed.
+                reject(new Error(`loader installer exited with code ${code}`));
             }
         });
         proc.on('error', reject);

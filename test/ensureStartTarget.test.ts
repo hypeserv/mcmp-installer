@@ -126,3 +126,18 @@ test('legacy forge: the newest runnable forge jar wins', async () => {
     assert.equal(await readMainClass(path.join(dir, 'server.jar')), FORGE);
     await fs.remove(dir);
 });
+
+test('no start target only warns', async () => {
+    const { ensureStartTarget } = await import('../src/ensureStartTarget.js');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcmp-nostart-'));
+    const origWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...a: unknown[]) => { warnings.push(a.join(' ')); };
+    try {
+        await ensureStartTarget(dir);
+        assert.ok(warnings.some(w => /No start target found/.test(w)));
+    } finally {
+        console.warn = origWarn;
+        await fs.remove(dir);
+    }
+});

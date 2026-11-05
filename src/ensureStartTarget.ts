@@ -64,9 +64,11 @@ export async function ensureStartTarget(root: string): Promise<void> {
         log.info(`Start target: server.jar (${serverMain})`);
         return;
     }
+    // Only a warning: failing here would leave the server without the installed pack files.
     log.warn(
-        'No start target found: neither unix_args.txt nor server.jar exists at the server root. ' +
-        'The panel start command (java -jar server.jar) will fail unless SERVER_JARFILE is changed.'
+        'No start target found: neither unix_args.txt nor server.jar exists at the server root, ' +
+        'so the loader install did not work (see the loader installer output above). ' +
+        'The panel start command (java -jar server.jar) will fail until a loader is installed.'
     );
 }
 
