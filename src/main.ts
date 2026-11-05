@@ -69,6 +69,8 @@ interface InstallPipelineInput {
     cleanScripts: boolean;
     /** MC version from the resolver, used when the pack itself has no loader info. */
     mcVersionHint: string | null;
+    /** Download kind from the resolver; null for --wget-mode. */
+    downloadKind: ModpackSource['kind'] | null;
 }
 
 interface InstallPipelineResult {
@@ -194,7 +196,8 @@ export async function runInstaller(opts: InstallerOptions): Promise<void> {
             update,
             cfLookup,
             cleanScripts,
-            mcVersionHint: source.mcVersion
+            mcVersionHint: source.mcVersion,
+            downloadKind: source.kind ?? null
         });
     }
 
@@ -345,10 +348,10 @@ async function runInstallPipeline(input: InstallPipelineInput): Promise<InstallP
     const manifestPath = path.join(modpackFolderPath, 'manifest.json');
     const modsDir = path.join(modpackFolderPath, 'mods');
     if (await fs.pathExists(manifestPath)) {
-        const step = await manifestStep(manifestPath, modsDir);
+        const step = await manifestStep(manifestPath, modsDir, input.downloadKind);
         if (step === 'shipped') {
             // Server packs often ship their manifest.json too; their mods are already there.
-            log.info('Pack already contains mods/ next to manifest.json (server pack); not downloading manifest mods.');
+            log.info('Server pack already contains its mods; not downloading the manifest mods.');
         } else if (step === 'download') {
             log.info('Running manifest installer...');
             await fs.ensureDir(modsDir);

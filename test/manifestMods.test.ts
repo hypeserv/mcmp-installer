@@ -192,20 +192,31 @@ test('lookup chunks at 1000 entries and dedupes', async () => {
     }
 });
 
-test('manifest step: server pack with shipped mods is not downloaded again', async () => {
+test('manifest step: server packs keep their mods, client packs download', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcmp-step-'));
     const manifest = path.join(dir, 'manifest.json');
     const mods = path.join(dir, 'mods');
     try {
         await fs.writeJson(manifest, { files: [] });
         assert.equal(await manifestStep(manifest, mods), 'none');
-        await fs.writeJson(manifest, { files: [{ projectID: 1, fileID: 1001 }] });
+        await fs.writeJson(manifest, {
+            files: Array.from({ length: 10 }, (_, i) => ({ projectID: i + 1, fileID: 1000 + i }))
+        });
         assert.equal(await manifestStep(manifest, mods), 'download');
         await fs.ensureDir(mods);
         await fs.writeFile(path.join(mods, 'readme.txt'), 'x');
+        assert.equal(await manifestStep(manifest, mods, 'serverpack'), 'download');
+
+        // Client pack with a few jars from overrides/mods (Homestead 2.0.1).
+        for (let i = 0; i < 3; i++) await fs.writeFile(path.join(mods, `extra${i}.jar`), 'x');
         assert.equal(await manifestStep(manifest, mods), 'download');
-        await fs.writeFile(path.join(mods, 'shipped.jar'), 'x');
+        assert.equal(await manifestStep(manifest, mods, 'client-manifest'), 'download');
+        assert.equal(await manifestStep(manifest, mods, 'serverpack'), 'shipped');
+
+        // Server pack with its full mods/ (Cosmic Frontiers 0.8.1), installed by URL.
+        for (let i = 3; i < 9; i++) await fs.writeFile(path.join(mods, `extra${i}.jar`), 'x');
         assert.equal(await manifestStep(manifest, mods), 'shipped');
+        assert.equal(await manifestStep(manifest, mods, 'client-manifest'), 'download');
     } finally {
         await fs.remove(dir);
     }

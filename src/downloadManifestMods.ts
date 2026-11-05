@@ -58,15 +58,28 @@ export function emptyReport(source: ManifestModsReport['source'], total: number)
 /**
  * What to do with a pack's manifest.json:
  * - none: it lists no CurseForge files
- * - shipped: mods/ already has jars (a server pack that also ships its manifest), keep them
+ * - shipped: a server pack that also ships its manifest; its mods/ is complete, keep it
  * - download: a client pack, fetch the listed files
+ *
+ * Client packs can ship a few jars in overrides/mods too, so jars in mods/
+ * alone don't mean "server pack". Without a resolver kind (--wget-mode),
+ * mods/ counts as complete when it holds at least half as many jars as the
+ * manifest lists.
  */
-export async function manifestStep(manifestPath: string, modsDir: string): Promise<'none' | 'shipped' | 'download'> {
-    if ((await readEntries(manifestPath)).length === 0) return 'none';
+export async function manifestStep(
+    manifestPath: string,
+    modsDir: string,
+    kind: string | null = null
+): Promise<'none' | 'shipped' | 'download'> {
+    const entries = await readEntries(manifestPath);
+    if (entries.length === 0) return 'none';
+    if (kind === 'client-manifest') return 'download';
     const jars = (await fs.pathExists(modsDir))
-        ? (await fs.readdir(modsDir)).filter(f => f.toLowerCase().endsWith('.jar'))
-        : [];
-    return jars.length > 0 ? 'shipped' : 'download';
+        ? (await fs.readdir(modsDir)).filter(f => f.toLowerCase().endsWith('.jar')).length
+        : 0;
+    if (jars === 0) return 'download';
+    if (kind === 'serverpack') return 'shipped';
+    return jars >= entries.length / 2 ? 'shipped' : 'download';
 }
 
 async function readEntries(manifestPath: string): Promise<(ManifestModRef & { required: boolean })[]> {
