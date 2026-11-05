@@ -27,7 +27,7 @@ npx -y @hypeserv/mcmp-installer --wget-mode --modpack-id https://example.com/pac
 Pin a specific version (recommended in Dockerfiles):
 
 ```bash
-npx -y @hypeserv/mcmp-installer@1.5.1 --provider curseforge --modpack-id 925200 --modpack-version 6012345
+npx -y @hypeserv/mcmp-installer@1.5.2 --provider curseforge --modpack-id 925200 --modpack-version 6012345
 ```
 
 ## Global install
